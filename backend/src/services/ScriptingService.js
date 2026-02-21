@@ -14,7 +14,11 @@ class ScriptingService {
         }
 
         try {
-            const sandbox = { db, console };
+            const sandbox = {
+                db,
+                console,
+                params: contextParams
+            };
             vm.createContext(sandbox);
 
             // Enolvemos el código de Sactivate/Snewrecord que escribió el programador

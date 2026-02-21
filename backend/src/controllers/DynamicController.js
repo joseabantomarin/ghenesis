@@ -155,11 +155,23 @@ exports.getGridData = async (req, res) => {
         // --- INTERCEPTOR SOPEN ---
         if (gridMeta.sopen) {
             console.log(`⚡ Leyendo datos vía sopen para Grilla ${idgrid}...`);
+
+            // Parsear el registro padre entero si la grilla hija lo recibe
+            let decodedMasterRecord = null;
+            if (req.query.masterRecordPayload) {
+                try {
+                    decodedMasterRecord = JSON.parse(req.query.masterRecordPayload);
+                } catch (e) {
+                    console.error("No se pudo parsear masterRecordPayload", e);
+                }
+            }
+
             const contextParams = {
                 page, limit, offset,
                 search: req.query.search,
                 masterField: req.query.masterField,
                 masterValue: req.query.masterValue,
+                masterRecord: decodedMasterRecord, // <- Se expuso todo el objeto padre al SandBox
                 sortField: req.query.sortField,
                 sortOrder: req.query.sortOrder
             };

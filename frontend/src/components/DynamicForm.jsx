@@ -227,7 +227,7 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids }) => {
                         const cols = 6;
 
                         return (
-                            <Grid item xs={12} md={cols} key={field.idf}>
+                            <Grid item xs={12} md={cols} key={field.idfield || field.campo}>
                                 {InputElement}
                             </Grid>
                         );

@@ -98,6 +98,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
         const inyectedData = sactivateData?.[gridMeta.vquery] || (sactivateData?.gridData && !gridMeta.gparent ? sactivateData.gridData : null);
 
         // Si el controlador en backend delegó todo y no hay orden ni filtro nativo, usamos el cache local
+        // ATENCIÓN: Solo usamos el caché inyectado genérico si NO somos una grilla hija
         if (inyectedData && Array.isArray(inyectedData) && !sortField && !gridFilters) {
             let processedData = [...inyectedData];
 
@@ -121,8 +122,38 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
 
             // Inyectamos las variables relacionales para el SQL WHERE
             if (gridMeta.gparent && masterRecord) {
-                params.masterField = gridMeta.fieldgroup;
-                params.masterValue = masterRecord[gridMeta.fieldgroup];
+                // Si existe fieldgroup se manda al backend, si no, se manda una cadena vacía
+                params.masterField = gridMeta.fieldgroup || '';
+
+                let mValue;
+
+                // Intentamos extraer el valor usando el fieldgroup exacto si existe
+                if (gridMeta.fieldgroup) {
+                    mValue = masterRecord[gridMeta.fieldgroup];
+
+                    // Fallback 1: Buscar versión en minúsculas (a veces PostgreSQL devuelve columnas en minúsculas)
+                    if (mValue === undefined) {
+                        mValue = masterRecord[gridMeta.fieldgroup.toLowerCase()];
+                    }
+                }
+
+                // Fallback 2: Buscar cualquier llave principal candidata si fieldgroup es nulo o falló
+                if (mValue === undefined) {
+                    const pkHierarchy = ['idf', 'idgrid', 'idform', 'idcontrol', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'idsistema', 'id'];
+                    const bestPk = pkHierarchy.find(key => masterRecord[key] !== undefined);
+                    if (bestPk) mValue = masterRecord[bestPk];
+                }
+
+                // Fallback 3: Si todo falla, coger el primer valor del registro (usualmente el ID)
+                if (mValue === undefined && Object.keys(masterRecord).length > 0) {
+                    mValue = masterRecord[Object.keys(masterRecord)[0]];
+                }
+
+                params.masterValue = mValue;
+
+                // Transferir absolutamente todo el registro padre convertido a JSON 
+                // para que cualquier script (sopen, etc) pueda acceder a cualquiera de sus variables.
+                params.masterRecordPayload = JSON.stringify(masterRecord);
             }
 
             const res = await axios.get(`/api/dynamic/data/${idform}/${gridMeta.idgrid}`, { params });
