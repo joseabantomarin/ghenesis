@@ -155,6 +155,7 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids }) => {
                                     disabled={field.readonly || field.locked}
                                     required={field.obligatorio}
                                     error={field.obligatorio && !value}
+                                    InputLabelProps={{ sx: { color: 'var(--primary-color)', fontWeight: 500 } }}
                                 >
                                     {opciones.map(opt => (
                                         <MenuItem key={opt} value={opt}>{opt}</MenuItem>
@@ -173,6 +174,7 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids }) => {
                                         />
                                     }
                                     label={field.titlefield || field.campo}
+                                    sx={{ '& .MuiFormControlLabel-label': { color: 'var(--primary-color)', fontWeight: 500 } }}
                                 />
                             );
                         } else if (field.tipod === 'W') {
@@ -187,6 +189,7 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids }) => {
                                     onChange={(e) => handleChange(field.campo, e.target.value)}
                                     disabled={field.readonly || field.locked}
                                     required={field.obligatorio}
+                                    InputLabelProps={{ sx: { color: 'var(--primary-color)', fontWeight: 500 } }}
                                 />
                             );
                         } else if (field.tipod === 'D') {
@@ -200,7 +203,7 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids }) => {
                                     value={value}
                                     onChange={(e) => handleChange(field.campo, e.target.value)}
                                     disabled={field.readonly || field.locked}
-                                    InputLabelProps={{ shrink: true }}
+                                    InputLabelProps={{ shrink: true, sx: { color: 'var(--primary-color)', fontWeight: 500 } }}
                                 />
                             )
                         } else {
@@ -219,6 +222,7 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids }) => {
                                     }}
                                     disabled={field.readonly || field.locked}
                                     required={field.obligatorio}
+                                    InputLabelProps={{ sx: { color: 'var(--primary-color)', fontWeight: 500 } }}
                                 />
                             );
                         }

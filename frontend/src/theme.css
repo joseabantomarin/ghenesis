@@ -1,11 +1,11 @@
 /* Variables Globales de Tema (Theme) para Ghenesis Framework */
 :root {
     /* Color Principal: Se aplica al AppBar de la página */
-    --primary-color: #1a1dd0;
+    --primary-color: #4C7AAF;
     --primary-text-color: #ffffff;
 
     /* Configuración de Grillas (AG Grid) */
-    --grid-header-bg: #614caf9e;
+    --grid-header-bg: #79A4F7;
     --grid-header-color: #ffffff;
     --grid-selected-row-bg: #4c78af43;
 
@@ -24,4 +24,9 @@
 .ag-root-wrapper .ag-header-cell-menu-button:hover .ag-icon,
 .ag-root-wrapper .ag-header-icon:hover .ag-icon {
     color: var(--grid-header-color) !important;
+}
+
+/* Quitar los puntos suspensivos ("...") de los cabezales cuando el texto es largo */
+.ag-header-cell-text {
+    text-overflow: clip !important;
 }

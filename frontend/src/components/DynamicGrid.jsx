@@ -1,9 +1,14 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
-    Paper, TablePagination, CircularProgress, Alert, Button, Box,
-    IconButton, Tooltip, Menu, MenuItem
+    Paper, TextField, CircularProgress, Alert, Button, Box,
+    IconButton, Tooltip, Menu, MenuItem, useTheme, useMediaQuery
 } from '@mui/material';
-import { Add as AddIcon, Edit as EditIcon, Print as PrintIcon, MoreVert as MoreVertIcon, Delete as DeleteIcon, FileDownload as DownloadIcon } from '@mui/icons-material';
+import {
+    Add as AddIcon, Edit as EditIcon, Print as PrintIcon, MoreVert as MoreVertIcon,
+    Delete as DeleteIcon, FileDownload as DownloadIcon, Refresh as RefreshIcon,
+    FirstPage as FirstPageIcon, NavigateBefore as NavigateBeforeIcon,
+    NavigateNext as NavigateNextIcon, LastPage as LastPageIcon
+} from '@mui/icons-material';
 import axios from 'axios';
 import DynamicForm from './DynamicForm';
 import { AgGridReact } from 'ag-grid-react';
@@ -33,6 +38,8 @@ const myTheme = themeQuartz.withParams({
 
 const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sactivateData }) => {
     const gridRef = useRef();
+    const theme = useTheme();
+    const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -68,8 +75,10 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
             minWidth: f.ancho || undefined,
             wrapText: true,           // Habilitar salto de línea en celdas
             autoHeight: true,         // Que la celda crezca según el texto
-            wrapHeaderText: true,     // Salto de línea en los títulos
-            autoHeaderHeight: true,   // El cabezal crece si el título es largo
+            wrapHeaderText: false,    // No salto de línea en los títulos (solicitud fig 4)
+            autoHeaderHeight: false,  // El cabezal no crece
+            headerTooltip: f.titlefield || f.campo, // Muestra hint en hover para cabecera
+            tooltipField: f.campo,    // Muestra hint en hover para la celda de datos
             cellRenderer: f.tipod === 'B' ? 'agCheckboxCellRenderer' : undefined,
             cellStyle: {
                 textAlign: f.alinear === 'D' ? 'right' : f.alinear === 'C' ? 'center' : 'left',
@@ -291,50 +300,65 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                 </Box>
                 {/* Barra de Herramientas Principal */}
                 {!gridMeta.ocultabar && (
-                    <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
-                        <Tooltip title="Nuevo Registro">
-                            <IconButton color="success" onClick={() => setEditingRecord({})} size="small" sx={{ bgcolor: 'rgba(46, 125, 50, 0.1)' }}>
-                                <AddIcon />
-                            </IconButton>
-                        </Tooltip>
+                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                        <Button
+                            variant="outlined"
+                            color="success"
+                            onClick={() => setEditingRecord({})}
+                            startIcon={isMobile ? null : <AddIcon />}
+                            sx={{ borderRadius: '8px', textTransform: 'none', px: isMobile ? 1 : 2, py: 0.75, minWidth: isMobile ? 40 : 'auto', fontWeight: 600 }}
+                        >
+                            {isMobile ? <AddIcon /> : "Nuevo"}
+                        </Button>
 
-                        <Tooltip title="Editar Seleccionado">
-                            <span>
-                                <IconButton
-                                    color="primary"
-                                    disabled={!selectedRecord || gridMeta.readonlyg}
-                                    onClick={handleEditSelected}
-                                    size="small"
-                                    sx={{ bgcolor: 'rgba(25, 118, 210, 0.1)' }}
-                                >
-                                    <EditIcon />
-                                </IconButton>
-                            </span>
-                        </Tooltip>
+                        <Button
+                            variant="outlined"
+                            color="primary"
+                            disabled={!selectedRecord || gridMeta.readonlyg}
+                            onClick={handleEditSelected}
+                            startIcon={isMobile ? null : <EditIcon />}
+                            sx={{ borderRadius: '8px', textTransform: 'none', px: isMobile ? 1 : 2, py: 0.75, minWidth: isMobile ? 40 : 'auto', fontWeight: 600 }}
+                        >
+                            {isMobile ? <EditIcon /> : "Editar"}
+                        </Button>
 
-                        <Tooltip title="Eliminar Seleccionado">
-                            <span>
-                                <IconButton
-                                    color="error"
-                                    disabled={!selectedRecord || gridMeta.readonlyg}
-                                    onClick={handleDeleteSelected}
-                                    size="small"
-                                    sx={{ bgcolor: 'rgba(211, 47, 47, 0.1)' }}
-                                >
-                                    <DeleteIcon />
-                                </IconButton>
-                            </span>
-                        </Tooltip>
+                        <Button
+                            variant="outlined"
+                            color="error"
+                            disabled={!selectedRecord || gridMeta.readonlyg}
+                            onClick={handleDeleteSelected}
+                            startIcon={isMobile ? null : <DeleteIcon />}
+                            sx={{ borderRadius: '8px', textTransform: 'none', px: isMobile ? 1 : 2, py: 0.75, minWidth: isMobile ? 40 : 'auto', fontWeight: 600 }}
+                        >
+                            {isMobile ? <DeleteIcon /> : "Borrar"}
+                        </Button>
 
-                        <Tooltip title="Exportar Excel (CSV)">
-                            <IconButton color="info" onClick={handleExportCsv} size="small" sx={{ bgcolor: 'rgba(2, 136, 209, 0.1)' }}>
-                                <DownloadIcon />
-                            </IconButton>
-                        </Tooltip>
+                        {/* Divisor vertical */}
+                        <Box sx={{ borderLeft: '1px solid', borderColor: 'divider', height: 28, mx: 0.5 }}></Box>
+
+                        <IconButton
+                            onClick={fetchData}
+                            color="default"
+                            sx={{ borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38 }}
+                        >
+                            <RefreshIcon />
+                        </IconButton>
+
+                        <IconButton
+                            color="info"
+                            onClick={handleExportCsv}
+                            sx={{ borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38 }}
+                        >
+                            <DownloadIcon />
+                        </IconButton>
 
                         {/* Menú Desplegable Adicional (Reportes / Más) */}
                         <Tooltip title="Más opciones">
-                            <IconButton color="default" onClick={handleMenuClick} size="small">
+                            <IconButton
+                                color="default"
+                                onClick={handleMenuClick}
+                                sx={{ borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38 }}
+                            >
                                 <MoreVertIcon />
                             </IconButton>
                         </Tooltip>
@@ -384,7 +408,8 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                                 }
                             }
                         }}
-                        animateRows={false} // CRÍTICO: Desactivamos la animación de filas para evitar que el render inicial de alturas variables salte / parpadee en la pantalla (Reflow shift constraint).
+                        enableBrowserTooltips={true} // Obligatorio para que emerja el hint nativo del navegador
+                        animateRows={false} // CRÍTICO: Desactivamos la animación de filas
                         rowHeight={gridMeta.altofila || 40} // Altura base predeterminada
                         headerHeight={45}
                         // Las columnas gestionarán la UI de sort pero NO lo harán en el cliente
@@ -392,22 +417,63 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                             sortable: true,
                             filter: true,
                             resizable: true,
-                            unSortIcon: true // Mostrar siempre el icono para invitar a hacer click
+                            unSortIcon: true, // Mostrar siempre el icono para invitar a hacer click
+                            filterParams: {
+                                buttons: ['apply', 'reset'] // Pone el botón Apply en el popup, evitando que busque y cierre por cada tecla (debounce lock)
+                            }
                         }}
                     />
                 </div>
             </Box>
 
-            <TablePagination
-                rowsPerPageOptions={[10, 25, 50, 100]}
-                component="div"
-                count={totalRecords}
-                rowsPerPage={rowsPerPage}
-                page={page}
-                onPageChange={handleChangePage}
-                onRowsPerPageChange={handleChangeRowsPerPage}
-                labelRowsPerPage="Registros por página:"
-            />
+            {/* Custom Paginator as requested in Fig 2 */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 2, borderTop: '1px solid', borderColor: 'divider', flexWrap: 'wrap' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box component="span" sx={{ fontWeight: 'bold', fontSize: '0.875rem' }}>RxP:</Box>
+                    <TextField
+                        select
+                        size="small"
+                        value={rowsPerPage}
+                        onChange={handleChangeRowsPerPage}
+                        sx={{
+                            width: 75,
+                            '& .MuiOutlinedInput-root': { borderRadius: '8px', bgcolor: '#f4f6f8' },
+                            '& .MuiSelect-select': { py: 0.5 }
+                        }}
+                    >
+                        {[10, 25, 50, 100].map(val => <MenuItem key={val} value={val}>{val}</MenuItem>)}
+                    </TextField>
+                </Box>
+
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: { xs: 0, sm: 2 } }}>
+                    <Button variant="outlined" sx={{ minWidth: 36, width: 36, p: 0.5, borderRadius: '8px', borderColor: '#ccc', color: '#555' }} disabled={page === 0} onClick={() => setPage(0)}><FirstPageIcon fontSize="small" /></Button>
+                    <Button variant="outlined" sx={{ minWidth: 36, width: 36, p: 0.5, borderRadius: '8px', borderColor: '#ccc', color: '#555' }} disabled={page === 0} onClick={() => setPage(page - 1)}><NavigateBeforeIcon fontSize="small" /></Button>
+                </Box>
+
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: { xs: 0, sm: 1 } }}>
+                    <Box component="span" sx={{ fontWeight: 'bold', fontSize: '0.875rem' }}>Pag:</Box>
+                    <TextField
+                        size="small"
+                        value={page + 1}
+                        onChange={(e) => {
+                            let p = parseInt(e.target.value);
+                            const maxPage = Math.ceil(totalRecords / rowsPerPage) || 1;
+                            if (!isNaN(p) && p >= 1 && p <= maxPage) setPage(p - 1);
+                        }}
+                        sx={{
+                            width: 60,
+                            '& .MuiOutlinedInput-root': { borderRadius: '8px', bgcolor: '#f4f6f8' },
+                            '& input': { textAlign: 'center', p: '4.5px 14px' }
+                        }}
+                    />
+                    <Box component="span" sx={{ fontSize: '0.875rem', mx: 0.5 }}>/ {Math.ceil(totalRecords / rowsPerPage) || 1}</Box>
+                </Box>
+
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: { xs: 0, sm: 1 } }}>
+                    <Button variant="outlined" sx={{ minWidth: 36, width: 36, p: 0.5, borderRadius: '8px', borderColor: '#ccc', color: '#555' }} disabled={page >= (Math.ceil(totalRecords / rowsPerPage) - 1)} onClick={() => setPage(page + 1)}><NavigateNextIcon fontSize="small" /></Button>
+                    <Button variant="outlined" sx={{ minWidth: 36, width: 36, p: 0.5, borderRadius: '8px', borderColor: '#ccc', color: '#555' }} disabled={page >= (Math.ceil(totalRecords / rowsPerPage) - 1)} onClick={() => setPage(Math.ceil(totalRecords / rowsPerPage) - 1)}><LastPageIcon fontSize="small" /></Button>
+                </Box>
+            </Box>
         </Paper >
     );
 };
