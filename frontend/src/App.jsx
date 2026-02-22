@@ -75,7 +75,7 @@ function App() {
     }
 
     return (
-        <Box sx={{ display: 'flex', height: { xs: 'calc(100vh - 90px)', sm: '100vh' } }}>
+        <Box sx={{ display: 'flex', height: '100dvh' }}>
             <CssBaseline />
 
             {/* Barra de Navegación Superior */}

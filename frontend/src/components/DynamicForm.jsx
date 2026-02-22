@@ -8,9 +8,30 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids }) => {
     const [formData, setFormData] = useState(record || {});
 
     // Extraer campos configurados para edición (eoculto = false)
-    const editFields = (gridMeta.fields || [])
-        .filter(f => !f.eoculto)
-        .sort((a, b) => a.posicion - b.posicion);
+    // Respetar el orden de columnas guardado por el usuario en la grilla
+    const editFields = (() => {
+        const allFields = (gridMeta.fields || []).filter(f => !f.eoculto);
+
+        let savedState = {};
+        try {
+            const stored = localStorage.getItem(`grid-col-state-${gridMeta.idgrid}`);
+            if (stored) savedState = JSON.parse(stored);
+        } catch (e) { }
+
+        if (Object.keys(savedState).length > 0) {
+            // Campos visibles en la grilla: orden del usuario
+            const visible = allFields
+                .filter(f => savedState[f.campo] !== undefined)
+                .sort((a, b) => (savedState[a.campo]?.index ?? 999) - (savedState[b.campo]?.index ?? 999));
+            // Campos no visibles en la grilla: al final, por posición original
+            const hidden = allFields
+                .filter(f => savedState[f.campo] === undefined)
+                .sort((a, b) => a.posicion - b.posicion);
+            return [...visible, ...hidden];
+        }
+
+        return allFields.sort((a, b) => a.posicion - b.posicion);
+    })();
 
     // Típico SActivate / SNewRecord inyectado
     useEffect(() => {

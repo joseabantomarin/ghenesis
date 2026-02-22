@@ -40,6 +40,7 @@ const myTheme = themeQuartz.withParams({
 
 const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sactivateData }) => {
     const gridRef = useRef();
+    const activeFilterColRef = useRef(null);
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
     const [data, setData] = useState([]);
@@ -56,7 +57,9 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
 
     // Estado para Edit y Selección
     const [selectedRecord, setSelectedRecord] = useState(null);
+    const [selectedRowIndex, setSelectedRowIndex] = useState(null);
     const [editingRecord, setEditingRecord] = useState(null);
+    const [focusedHelpText, setFocusedHelpText] = useState('');
 
     // Estado para Menú de Reportes (Móvil/Desplegable)
     const [anchorEl, setAnchorEl] = useState(null);
@@ -71,17 +74,24 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
             .filter(f => !f.oculto)
             .sort((a, b) => a.posicion - b.posicion);
 
-        return fields.map(f => ({
+        // Restaurar estado guardado (orden + anchos)
+        let savedState = {}; // { campo: { width, index } }
+        try {
+            const stored = localStorage.getItem(`grid-col-state-${gridMeta.idgrid}`);
+            if (stored) savedState = JSON.parse(stored);
+        } catch (e) { }
+
+        let defs = fields.map(f => ({
             field: f.campo,
             headerName: f.titlefield || f.campo,
-            width: f.ancho || 150,
+            initialWidth: savedState[f.campo]?.width || f.ancho || 150,
             minWidth: f.ancho || undefined,
-            wrapText: true,           // Habilitar salto de línea en celdas
-            autoHeight: true,         // Que la celda crezca según el texto
-            wrapHeaderText: false,    // No salto de línea en los títulos (solicitud fig 4)
-            autoHeaderHeight: false,  // El cabezal no crece
-            headerTooltip: f.titlefield || f.campo, // Muestra hint en hover para cabecera
-            tooltipField: f.campo,    // Muestra hint en hover para la celda de datos
+            wrapText: true,
+            autoHeight: true,
+            wrapHeaderText: false,
+            autoHeaderHeight: false,
+            headerTooltip: f.titlefield || f.campo,
+            tooltipField: f.campo,
             cellRenderer: f.tipod === 'B' ? 'agCheckboxCellRenderer' : undefined,
             cellStyle: {
                 textAlign: f.alinear === 'D' ? 'right' : f.alinear === 'C' ? 'center' : 'left',
@@ -93,7 +103,34 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                 return params.value;
             } : undefined
         }));
+
+        // Reordenar según el orden guardado
+        if (Object.keys(savedState).length > 0) {
+            defs.sort((a, b) => {
+                const ia = savedState[a.field]?.index ?? 999;
+                const ib = savedState[b.field]?.index ?? 999;
+                return ia - ib;
+            });
+        }
+
+        return defs;
     }, [gridMeta]);
+
+    // Guardar estado completo de columnas (orden + anchos)
+    const saveColumnState = (api) => {
+        const allCols = api.getColumnState();
+        const state = {};
+        allCols.forEach((c, i) => { state[c.colId] = { width: c.width, index: i }; });
+        localStorage.setItem(`grid-col-state-${gridMeta.idgrid}`, JSON.stringify(state));
+    };
+
+    const handleColumnResized = (e) => {
+        if (e.finished && e.source === 'uiColumnResized') saveColumnState(e.api);
+    };
+
+    const handleColumnMoved = (e) => {
+        if (e.finished) saveColumnState(e.api);
+    };
 
     const fetchData = async () => {
         // Pausar fetch si es grilla hija pero no se le ha pasado el registro padre
@@ -202,6 +239,17 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
         const rec = selectedRows.length > 0 ? selectedRows[0] : null;
         setSelectedRecord(rec);
 
+        // Calcular índice absoluto de la fila seleccionada (página + posición en grilla)
+        if (rec) {
+            let rowIdx = null;
+            gridRef.current.api.forEachNodeAfterFilterAndSort((node, index) => {
+                if (node.isSelected()) rowIdx = index;
+            });
+            setSelectedRowIndex(rowIdx !== null ? page * rowsPerPage + rowIdx + 1 : null);
+        } else {
+            setSelectedRowIndex(null);
+        }
+
         // Disparar evento al padre DynamicView (Master-Detail orchestration)
         if (onRowSelect) {
             onRowSelect(gridMeta.idgrid, rec);
@@ -222,14 +270,16 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
     };
 
     const handleFilterChanged = (e) => {
-        // Obtenemos todos los filtros activos de las cabeceras
         const filterModel = e.api.getFilterModel();
-        if (Object.keys(filterModel).length > 0) {
+        const activeFilterCols = Object.keys(filterModel);
+        if (activeFilterCols.length > 0) {
+            activeFilterColRef.current = activeFilterCols[activeFilterCols.length - 1];
             setGridFilters(filterModel);
         } else {
+            // No limpiar activeFilterColRef — onRowDataUpdated lo reabrirá
             setGridFilters(null);
         }
-        setPage(0); // Regresar a la primera página al filtrar
+        setPage(0);
     };
 
     const handleEditSelected = () => {
@@ -468,15 +518,32 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                         theme={myTheme}
                         rowData={data}
                         columnDefs={columnDefs}
-                        rowSelection="single"
+                        rowSelection={{ mode: 'singleRow', checkboxes: false }}
                         onSelectionChanged={handleSelectionChanged}
                         onSortChanged={handleSortChanged}
                         onFilterChanged={handleFilterChanged}
+                        onColumnResized={handleColumnResized}
+                        onColumnMoved={handleColumnMoved}
+                        onRowDataUpdated={() => {
+                            // Re-abrir popup de filtro
+                            if (activeFilterColRef.current) {
+                                const colId = activeFilterColRef.current;
+                                try { gridRef.current?.api?.showColumnFilter(colId); } catch (e) { }
+                            }
+                        }}
                         onCellFocused={(e) => {
                             if (e.rowIndex !== null && e.api) {
                                 const rowNode = e.api.getDisplayedRowAtIndex(e.rowIndex);
                                 if (rowNode && !rowNode.isSelected()) {
-                                    rowNode.setSelected(true, true); // true = limpiar select previous, true = disparar eventos
+                                    rowNode.setSelected(true, true);
+                                }
+                            }
+                            // Actualizar texto de ayuda según la columna enfocada
+                            if (e.column) {
+                                const colId = e.column.getColId();
+                                const fieldMeta = (gridMeta.fields || []).find(f => f.campo === colId);
+                                if (fieldMeta) {
+                                    setFocusedHelpText(fieldMeta.ayuda || fieldMeta.titlefield || colId);
                                 }
                             }
                         }}
@@ -491,12 +558,31 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                             resizable: true,
                             unSortIcon: true, // Mostrar siempre el icono para invitar a hacer click
                             filterParams: {
-                                buttons: ['apply', 'reset'] // Pone el botón Apply en el popup, evitando que busque y cierre por cada tecla (debounce lock)
+                                debounceMs: 300,       // Esperar 300ms después de escribir antes de filtrar
+                                closeOnApply: false     // No cerrar el popup al filtrar, solo al hacer click afuera
                             }
                         }}
                     />
                 </Box>
             </Box>
+
+            {/* Barra de Ayuda del Campo Enfocado */}
+            {focusedHelpText && (
+                <Box sx={{
+                    px: { xs: 1.5, sm: 2 },
+                    py: 0.6,
+                    bgcolor: '#f4f6f8',
+                    borderTop: '1px solid',
+                    borderColor: 'divider',
+                    minHeight: 28,
+                    display: 'flex',
+                    alignItems: 'center',
+                }}>
+                    <Typography sx={{ fontSize: '0.82rem', color: 'var(--primary-color)', fontWeight: 'bold' }}>
+                        {focusedHelpText}
+                    </Typography>
+                </Box>
+            )}
 
             {/* Custom Paginator as requested in Fig 2 */}
             <Box sx={{
@@ -560,6 +646,10 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: { xs: 0.5, sm: 1 } }}>
                     <Button variant="outlined" sx={{ minWidth: 36, width: 36, p: 0.5, borderRadius: '8px', borderColor: '#ccc', color: '#555' }} disabled={page >= (Math.ceil(totalRecords / rowsPerPage) - 1)} onClick={() => setPage(page + 1)}><NavigateNextIcon fontSize="small" /></Button>
                     <Button variant="outlined" sx={{ minWidth: 36, width: 36, p: 0.5, borderRadius: '8px', borderColor: '#ccc', color: '#555' }} disabled={page >= (Math.ceil(totalRecords / rowsPerPage) - 1)} onClick={() => setPage(Math.ceil(totalRecords / rowsPerPage) - 1)}><LastPageIcon fontSize="small" /></Button>
+                </Box>
+
+                <Box component="span" sx={{ ml: { xs: 0.5, sm: 2 }, fontSize: '0.875rem', fontWeight: 'bold', color: 'var(--primary-color)', whiteSpace: 'nowrap' }}>
+                    Reg. {selectedRowIndex !== null ? selectedRowIndex : (totalRecords > 0 ? (page * rowsPerPage + 1) : 0)} de {totalRecords}
                 </Box>
             </Box>
             {/* Diálogo de Confirmación para Eliminar */}
