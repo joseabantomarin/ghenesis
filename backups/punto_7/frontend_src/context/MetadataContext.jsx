@@ -13,16 +13,14 @@ export const MetadataProvider = ({ children }) => {
     const [formsCache, setFormsCache] = useState({});
     const [loadingMenu, setLoadingMenu] = useState(true);
 
-    // Al inicio, solo cargamos los forms que servirán de Menú
+    // Al inicio, solo cargamos los forms que servirán de Menú (requiere token)
     useEffect(() => {
+        if (!token) {
+            setLoadingMenu(false);
+            return;
+        }
         const fetchMenu = async () => {
-            if (!token) {
-                setLoadingMenu(false);
-                return;
-            }
-
             try {
-                setLoadingMenu(true);
                 const res = await axios.get('/api/dynamic/menu');
                 if (res.data.success) {
                     setMenu(res.data.data);
@@ -33,6 +31,7 @@ export const MetadataProvider = ({ children }) => {
                 setLoadingMenu(false);
             }
         };
+        setLoadingMenu(true);
         fetchMenu();
     }, [token]);
 

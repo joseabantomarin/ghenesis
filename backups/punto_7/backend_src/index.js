@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const db = require('./config/db');
-// Importar rutas (las crearemos pronto)
+// Importar rutas
 const dynamicApiRoutes = require('./routes/dynamicApi');
 const authRoutes = require('./routes/authRoutes');
 const authMiddleware = require('./middlewares/authMiddleware');

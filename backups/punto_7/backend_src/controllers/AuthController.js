@@ -42,6 +42,8 @@ class AuthController {
                 {
                     iduser: user.iduser,
                     username: user.username,
+                    fullname: user.fullname,
+                    email: user.email,
                     role: user.rolename
                 },
                 JWT_SECRET,

@@ -1,1 +1,1 @@
-Backup Punto 7 - Sun Feb 22 02:55:07 -05 2026
+Punto de Restauracion 7 - Login profesional, Menú categorizado, Header usuario con dropdown

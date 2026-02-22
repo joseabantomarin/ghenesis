@@ -1,23 +1,24 @@
 import React, { useState } from 'react';
 import { List, ListItemButton, ListItemIcon, ListItemText, Collapse } from '@mui/material';
 import {
-    ExpandLess, ExpandMore, Folder, Article,
-    Settings as ConfigIcon, Terminal as ProgramadorIcon,
+    ExpandLess, ExpandMore, Article,
+    Terminal as ProgramadorIcon,
     Storage as GeneralIcon, PlayCircle as OperacionesIcon,
-    BarChart as ReportesIcon, Person as UsersIcon,
-    Shield as RolesIcon, SystemUpdateAlt as SistemaIcon,
+    BarChart as ReportesIcon,
+    SystemUpdateAlt as SistemaIcon,
     VpnKey as PasswordIcon, Logout as LogoutIcon
 } from '@mui/icons-material';
 import { useMetadata } from '../context/MetadataContext';
+import { useAuth } from '../context/AuthContext';
 
 const DynamicMenu = ({ onItemClick }) => {
     const { menu } = useMetadata();
+    const { logout } = useAuth();
     const [openItems, setOpenItems] = useState({
         'programador': true,
         'general': true,
         'operaciones': true,
         'reportes': true,
-        'configuracion': true,
         'sistema': true
     });
 
@@ -25,9 +26,9 @@ const DynamicMenu = ({ onItemClick }) => {
         setOpenItems(prev => ({ ...prev, [id]: !prev[id] }));
     };
 
-    const itemClick = (id, title, type = 'dynamic') => {
+    const itemClick = (id, title) => {
         if (onItemClick) {
-            onItemClick(id, title, type);
+            onItemClick(id, title);
         }
     };
 
@@ -48,22 +49,28 @@ const DynamicMenu = ({ onItemClick }) => {
     const operacionesItems = menu.filter(m => m.tipo === 2 && !m.idparent);
     const reportesItems = menu.filter(m => m.tipo === 3 && !m.idparent);
 
-    const MenuCategory = ({ id, label, icon: Icon, children }) => (
-        <>
-            <ListItemButton onClick={() => handleClick(id)} sx={{ py: 0.5 }}>
-                <ListItemIcon sx={{ minWidth: 36 }}>
-                    <Icon color="primary" fontSize="small" />
-                </ListItemIcon>
-                <ListItemText primary={label} primaryTypographyProps={{ fontWeight: 'bold', fontSize: '0.9rem' }} />
-                {openItems[id] ? <ExpandLess /> : <ExpandMore />}
-            </ListItemButton>
-            <Collapse in={openItems[id]} timeout="auto" unmountOnExit>
-                <List component="div" disablePadding>
-                    {children}
-                </List>
-            </Collapse>
-        </>
-    );
+    const MenuCategory = ({ id, label, icon: Icon, children }) => {
+        // No renderizar categorías vacías
+        const hasContent = React.Children.toArray(children).length > 0;
+        if (!hasContent) return null;
+
+        return (
+            <>
+                <ListItemButton onClick={() => handleClick(id)} sx={{ py: 0.5 }}>
+                    <ListItemIcon sx={{ minWidth: 36 }}>
+                        <Icon color="primary" fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText primary={label} primaryTypographyProps={{ fontWeight: 'bold', fontSize: '0.9rem' }} />
+                    {openItems[id] ? <ExpandLess /> : <ExpandMore />}
+                </ListItemButton>
+                <Collapse in={openItems[id]} timeout="auto" unmountOnExit>
+                    <List component="div" disablePadding>
+                        {children}
+                    </List>
+                </Collapse>
+            </>
+        );
+    };
 
     return (
         <List sx={{ pt: 1 }}>
@@ -87,25 +94,13 @@ const DynamicMenu = ({ onItemClick }) => {
                 {renderDynamicItems(reportesItems)}
             </MenuCategory>
 
-            {/* 5. Configuración */}
-            <MenuCategory id="configuracion" label="Configuración" icon={ConfigIcon}>
-                <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => itemClick('users', 'Gestión de Usuarios', 'users')}>
-                    <ListItemIcon sx={{ minWidth: 32 }}><UsersIcon fontSize="small" /></ListItemIcon>
-                    <ListItemText primary="Users" primaryTypographyProps={{ fontSize: '0.875rem' }} />
-                </ListItemButton>
-                <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => itemClick('roles', 'Matriz de Permisos', 'roles')}>
-                    <ListItemIcon sx={{ minWidth: 32 }}><RolesIcon fontSize="small" /></ListItemIcon>
-                    <ListItemText primary="Roles" primaryTypographyProps={{ fontSize: '0.875rem' }} />
-                </ListItemButton>
-            </MenuCategory>
-
-            {/* 6. Sistema */}
+            {/* 5. Sistema */}
             <MenuCategory id="sistema" label="Sistema" icon={SistemaIcon}>
                 <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => alert('Próximamente: Cambiar Password')}>
                     <ListItemIcon sx={{ minWidth: 32 }}><PasswordIcon fontSize="small" /></ListItemIcon>
                     <ListItemText primary="Cambiar password" primaryTypographyProps={{ fontSize: '0.875rem' }} />
                 </ListItemButton>
-                <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => window.confirm('¿Cerrar sesión?') && alert('Logout')}>
+                <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => { if (window.confirm('¿Cerrar sesión?')) logout(); }}>
                     <ListItemIcon sx={{ minWidth: 32 }}><LogoutIcon fontSize="small" /></ListItemIcon>
                     <ListItemText primary="Cerrar sesión" primaryTypographyProps={{ fontSize: '0.875rem' }} />
                 </ListItemButton>
