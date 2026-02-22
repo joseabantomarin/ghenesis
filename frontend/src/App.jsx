@@ -1,10 +1,16 @@
 import React, { useState } from 'react';
-import { Box, CssBaseline, AppBar, Toolbar, Typography, Drawer, CircularProgress, IconButton, Tabs, Tab, useMediaQuery } from '@mui/material';
+import { Box, CssBaseline, AppBar, Toolbar, Typography, Drawer, CircularProgress, IconButton, Tabs, Tab, useMediaQuery, Menu, MenuItem, Divider, Avatar, ListItemIcon as MuiListItemIcon } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import CloseIcon from '@mui/icons-material/Close';
+import LogoutIcon from '@mui/icons-material/Logout';
+import InfoIcon from '@mui/icons-material/Info';
+import EmailIcon from '@mui/icons-material/Email';
+import PersonIcon from '@mui/icons-material/Person';
 import { useMetadata } from './context/MetadataContext';
+import { useAuth } from './context/AuthContext';
 import DynamicMenu from './components/DynamicMenu';
 import DynamicView from './components/DynamicView';
+import Login from './components/Login';
 import './theme.css'; // Importando Tema Global
 
 const drawerWidth = 310;
@@ -30,6 +36,7 @@ function TabPanel(props) {
 }
 
 function App() {
+    const { loading: authLoading, token, user, logout } = useAuth();
     const { loadingMenu } = useMetadata();
     const isMobile = useMediaQuery('(max-width:690px)'); // Detectar pantalla móvil
     // Por defecto ocultar menú en móviles, mostrar en PC
@@ -38,6 +45,10 @@ function App() {
     // Sistema de Pestañas
     const [tabs, setTabs] = useState([{ id: 'home', title: 'Home', type: 'home' }]);
     const [activeTab, setActiveTab] = useState('home');
+
+    // Menú de usuario (dropdown)
+    const [userMenuAnchor, setUserMenuAnchor] = useState(null);
+    const userMenuOpen = Boolean(userMenuAnchor);
 
     const toggleDrawer = () => {
         setDrawerOpen(!drawerOpen);
@@ -66,6 +77,34 @@ function App() {
         }
     };
 
+    const handleUserMenuOpen = (event) => {
+        setUserMenuAnchor(event.currentTarget);
+    };
+
+    const handleUserMenuClose = () => {
+        setUserMenuAnchor(null);
+    };
+
+    const handleLogout = () => {
+        handleUserMenuClose();
+        if (window.confirm('¿Desea cerrar la sesión?')) {
+            logout();
+        }
+    };
+
+    // --- Auth gates ---
+    if (authLoading) {
+        return (
+            <Box sx={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', bgcolor: '#f5f5f5' }}>
+                <CircularProgress />
+            </Box>
+        );
+    }
+
+    if (!token || !user) {
+        return <Login />;
+    }
+
     if (loadingMenu) {
         return (
             <Box sx={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center' }}>
@@ -73,6 +112,12 @@ function App() {
             </Box>
         );
     }
+
+    // Helper: obtener iniciales del usuario
+    const getInitials = (name) => {
+        if (!name) return 'U';
+        return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+    };
 
     return (
         <Box sx={{ display: 'flex', height: '100dvh' }}>
@@ -97,9 +142,104 @@ function App() {
                     >
                         <MenuIcon />
                     </IconButton>
-                    <Typography variant="h6" noWrap component="div">
+                    <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
                         Ghenesis - Framework Web
                     </Typography>
+
+                    {/* --- User Info (arriba a la derecha) --- */}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer' }} onClick={handleUserMenuOpen}>
+                        <Typography variant="body2" sx={{ display: { xs: 'none', sm: 'block' }, mr: 0.5, opacity: 0.9 }}>
+                            {user?.fullname || user?.username}
+                        </Typography>
+                        <Avatar
+                            sx={{
+                                width: 34,
+                                height: 34,
+                                bgcolor: 'rgba(255,255,255,0.25)',
+                                fontSize: '0.85rem',
+                                fontWeight: 'bold',
+                                border: '2px solid rgba(255,255,255,0.4)',
+                                transition: 'all 0.2s',
+                                '&:hover': {
+                                    bgcolor: 'rgba(255,255,255,0.35)',
+                                    transform: 'scale(1.05)'
+                                }
+                            }}
+                        >
+                            {getInitials(user?.fullname || user?.username)}
+                        </Avatar>
+                    </Box>
+
+                    {/* Dropdown del usuario */}
+                    <Menu
+                        anchorEl={userMenuAnchor}
+                        open={userMenuOpen}
+                        onClose={handleUserMenuClose}
+                        onClick={handleUserMenuClose}
+                        PaperProps={{
+                            elevation: 8,
+                            sx: {
+                                mt: 1,
+                                minWidth: 240,
+                                borderRadius: '12px',
+                                overflow: 'visible',
+                                '&:before': {
+                                    content: '""',
+                                    display: 'block',
+                                    position: 'absolute',
+                                    top: 0,
+                                    right: 20,
+                                    width: 10,
+                                    height: 10,
+                                    bgcolor: 'background.paper',
+                                    transform: 'translateY(-50%) rotate(45deg)',
+                                    zIndex: 0,
+                                },
+                            },
+                        }}
+                        transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+                        anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+                    >
+                        {/* Nombre completo */}
+                        <MenuItem disabled sx={{ opacity: '1 !important' }}>
+                            <MuiListItemIcon><PersonIcon fontSize="small" color="primary" /></MuiListItemIcon>
+                            <Box>
+                                <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
+                                    {user?.fullname || user?.username}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                    {user?.role || 'Usuario'}
+                                </Typography>
+                            </Box>
+                        </MenuItem>
+
+                        {/* Email */}
+                        <MenuItem disabled sx={{ opacity: '1 !important' }}>
+                            <MuiListItemIcon><EmailIcon fontSize="small" color="primary" /></MuiListItemIcon>
+                            <Typography variant="body2">{user?.email || 'Sin email'}</Typography>
+                        </MenuItem>
+
+                        <Divider />
+
+                        {/* About */}
+                        <MenuItem onClick={handleUserMenuClose}>
+                            <MuiListItemIcon><InfoIcon fontSize="small" /></MuiListItemIcon>
+                            <Box>
+                                <Typography variant="body2">About</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                    Ghenesis Framework v1.0
+                                </Typography>
+                            </Box>
+                        </MenuItem>
+
+                        <Divider />
+
+                        {/* Cerrar sesión */}
+                        <MenuItem onClick={handleLogout}>
+                            <MuiListItemIcon><LogoutIcon fontSize="small" color="error" /></MuiListItemIcon>
+                            <Typography variant="body2" color="error">Cerrar sesión</Typography>
+                        </MenuItem>
+                    </Menu>
                 </Toolbar>
             </AppBar>
 

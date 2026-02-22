@@ -2,8 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const db = require('./config/db');
-// Importar rutas (las crearemos pronto)
+// Importar rutas
 const dynamicApiRoutes = require('./routes/dynamicApi');
+const authRoutes = require('./routes/authRoutes');
+const authMiddleware = require('./middlewares/authMiddleware');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,7 +33,8 @@ db.query('SELECT NOW()')
     });
 
 // Rutas
-app.use('/api/dynamic', dynamicApiRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/dynamic', authMiddleware, dynamicApiRoutes);
 
 // Endpoint de prueba
 app.get('/api/health', (req, res) => {

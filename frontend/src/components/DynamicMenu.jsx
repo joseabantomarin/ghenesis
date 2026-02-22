@@ -1,65 +1,110 @@
 import React, { useState } from 'react';
 import { List, ListItemButton, ListItemIcon, ListItemText, Collapse } from '@mui/material';
-import { ExpandLess, ExpandMore, Folder, Article } from '@mui/icons-material';
+import {
+    ExpandLess, ExpandMore, Article,
+    Terminal as ProgramadorIcon,
+    Storage as GeneralIcon, PlayCircle as OperacionesIcon,
+    BarChart as ReportesIcon,
+    SystemUpdateAlt as SistemaIcon,
+    VpnKey as PasswordIcon, Logout as LogoutIcon
+} from '@mui/icons-material';
 import { useMetadata } from '../context/MetadataContext';
+import { useAuth } from '../context/AuthContext';
 
 const DynamicMenu = ({ onItemClick }) => {
     const { menu } = useMetadata();
-    const [openItems, setOpenItems] = useState({});
+    const { logout } = useAuth();
+    const [openItems, setOpenItems] = useState({
+        'programador': true,
+        'general': true,
+        'operaciones': true,
+        'reportes': true,
+        'sistema': true
+    });
 
     const handleClick = (id) => {
         setOpenItems(prev => ({ ...prev, [id]: !prev[id] }));
     };
 
-    const itemClick = (item) => {
+    const itemClick = (id, title) => {
         if (onItemClick) {
-            onItemClick(item.idform, item.descripcion || item.cform);
+            onItemClick(id, title);
         }
     };
 
-    // Algoritmo para organizar el menú en un árbol basado en IDPARENT e IDFORM
-    const buildMenuTree = (items, parentId = null) => {
-        return items
-            .filter(item => item.idparent === parentId)
-            .map(item => {
-                const children = buildMenuTree(items, item.idform);
-                const hasChildren = children.length > 0;
-                const isOpen = openItems[item.idform];
-
-                if (hasChildren) {
-                    return (
-                        <React.Fragment key={item.idform}>
-                            <ListItemButton onClick={() => handleClick(item.idform)} sx={{ py: 0.2 }}>
-                                <ListItemIcon>
-                                    <Folder />
-                                </ListItemIcon>
-                                <ListItemText primary={item.descripcion || item.cform} />
-                                {isOpen ? <ExpandLess /> : <ExpandMore />}
-                            </ListItemButton>
-                            <Collapse in={isOpen} timeout="auto" unmountOnExit>
-                                <List component="div" disablePadding sx={{ pl: 2 }}>
-                                    {children}
-                                </List>
-                            </Collapse>
-                        </React.Fragment>
-                    );
-                } else {
-                    return (
-                        <ListItemButton key={item.idform} onClick={() => itemClick(item)} sx={{ py: 0.2 }}>
-                            <ListItemIcon>
-                                <Article />
-                            </ListItemIcon>
-                            <ListItemText primary={item.descripcion || item.cform} />
-                        </ListItemButton>
-                    );
-                }
-            });
+    const renderDynamicItems = (items) => {
+        return items.map(item => (
+            <ListItemButton key={item.idform} onClick={() => itemClick(item.idform, item.descripcion || item.cform)} sx={{ py: 0.3, pl: 4 }}>
+                <ListItemIcon sx={{ minWidth: 32 }}>
+                    <Article fontSize="small" />
+                </ListItemIcon>
+                <ListItemText primary={item.descripcion || item.cform} primaryTypographyProps={{ fontSize: '0.875rem' }} />
+            </ListItemButton>
+        ));
     };
 
-    // Solo forms de tipo contenedor y opciones de UI
+    // Clasificar items dinámicos por tipo (según arquitectura Ghenesis)
+    const programadorItems = menu.filter(m => m.tipo === 0 && !m.idparent);
+    const generalItems = menu.filter(m => m.tipo === 1 && !m.idparent);
+    const operacionesItems = menu.filter(m => m.tipo === 2 && !m.idparent);
+    const reportesItems = menu.filter(m => m.tipo === 3 && !m.idparent);
+
+    const MenuCategory = ({ id, label, icon: Icon, children }) => {
+        // No renderizar categorías vacías
+        const hasContent = React.Children.toArray(children).length > 0;
+        if (!hasContent) return null;
+
+        return (
+            <>
+                <ListItemButton onClick={() => handleClick(id)} sx={{ py: 0.5 }}>
+                    <ListItemIcon sx={{ minWidth: 36 }}>
+                        <Icon color="primary" fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText primary={label} primaryTypographyProps={{ fontWeight: 'bold', fontSize: '0.9rem' }} />
+                    {openItems[id] ? <ExpandLess /> : <ExpandMore />}
+                </ListItemButton>
+                <Collapse in={openItems[id]} timeout="auto" unmountOnExit>
+                    <List component="div" disablePadding>
+                        {children}
+                    </List>
+                </Collapse>
+            </>
+        );
+    };
+
     return (
-        <List sx={{ pt: 0 }}>
-            {buildMenuTree(menu, null)}
+        <List sx={{ pt: 1 }}>
+            {/* 1. Programador */}
+            <MenuCategory id="programador" label="Programador" icon={ProgramadorIcon}>
+                {renderDynamicItems(programadorItems)}
+            </MenuCategory>
+
+            {/* 2. General */}
+            <MenuCategory id="general" label="General" icon={GeneralIcon}>
+                {renderDynamicItems(generalItems)}
+            </MenuCategory>
+
+            {/* 3. Operaciones */}
+            <MenuCategory id="operaciones" label="Operaciones" icon={OperacionesIcon}>
+                {renderDynamicItems(operacionesItems)}
+            </MenuCategory>
+
+            {/* 4. Reportes */}
+            <MenuCategory id="reportes" label="Reportes" icon={ReportesIcon}>
+                {renderDynamicItems(reportesItems)}
+            </MenuCategory>
+
+            {/* 5. Sistema */}
+            <MenuCategory id="sistema" label="Sistema" icon={SistemaIcon}>
+                <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => alert('Próximamente: Cambiar Password')}>
+                    <ListItemIcon sx={{ minWidth: 32 }}><PasswordIcon fontSize="small" /></ListItemIcon>
+                    <ListItemText primary="Cambiar password" primaryTypographyProps={{ fontSize: '0.875rem' }} />
+                </ListItemButton>
+                <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => { if (window.confirm('¿Cerrar sesión?')) logout(); }}>
+                    <ListItemIcon sx={{ minWidth: 32 }}><LogoutIcon fontSize="small" /></ListItemIcon>
+                    <ListItemText primary="Cerrar sesión" primaryTypographyProps={{ fontSize: '0.875rem' }} />
+                </ListItemButton>
+            </MenuCategory>
         </List>
     );
 };

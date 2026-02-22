@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
+import { useAuth } from './AuthContext';
 
 // Equivalente al 'dframe' de Delphi adaptado para JS/React
 const MetadataContext = createContext();
@@ -7,12 +8,17 @@ const MetadataContext = createContext();
 export const useMetadata = () => useContext(MetadataContext);
 
 export const MetadataProvider = ({ children }) => {
+    const { token } = useAuth();
     const [menu, setMenu] = useState([]);
     const [formsCache, setFormsCache] = useState({});
     const [loadingMenu, setLoadingMenu] = useState(true);
 
-    // Al inicio, solo cargamos los forms que servirán de Menú
+    // Al inicio, solo cargamos los forms que servirán de Menú (requiere token)
     useEffect(() => {
+        if (!token) {
+            setLoadingMenu(false);
+            return;
+        }
         const fetchMenu = async () => {
             try {
                 const res = await axios.get('/api/dynamic/menu');
@@ -25,8 +31,9 @@ export const MetadataProvider = ({ children }) => {
                 setLoadingMenu(false);
             }
         };
+        setLoadingMenu(true);
         fetchMenu();
-    }, []);
+    }, [token]);
 
     // Función para obtener la definición de un módulo específico (XFORM + XGRID + XCONTROLS)
     // Utiliza caché en memoria para "no demorar la próxima vez que se lo llama"
