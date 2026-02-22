@@ -108,7 +108,8 @@ const buildWrappedQuery = async (baseSql, baseParams, reqQuery, gridMeta) => {
 
     // Agregar paginación al SQL original
     const page = parseInt(reqQuery.page) || 1;
-    let limit = parseInt(reqQuery.limit) || gridMeta.rxpage || 50;
+    const parsedLimit = parseInt(reqQuery.limit);
+    let limit = (!isNaN(parsedLimit) && parsedLimit >= 0) ? parsedLimit : (gridMeta.rxpage || 50);
     const offset = (page - 1) * limit;
 
     if (limit > 0) {
@@ -269,7 +270,12 @@ exports.saveGridData = async (req, res) => {
 
         if (isUpdate && recordId) {
             // UPDATE table SET col1=$1, col2=$2 WHERE PK=$3
-            const pkField = columns.find(c => c.startsWith('id') || c.endsWith('id')) || columns[0];
+            // Extraer la PK real desde la metadata
+            const metaPkField = gridMeta.fields.find(f => f.pk === true || f.campo === `id${physicalTable}`);
+            let pkField = metaPkField ? metaPkField.campo : null;
+            if (!pkField) {
+                pkField = columns.find(c => c.startsWith('id') || c.endsWith('id')) || columns[0];
+            }
 
             // Retiramos la llave primaria del SET para no sobrescribirla
             const updateCols = columns.filter(c => c !== pkField);

@@ -48,13 +48,12 @@ const DynamicView = ({ idform }) => {
     const masterGrids = meta.grids.filter(g => !g.gparent);
 
     return (
-        <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', pt: 0, pl: 0.5, pr: 2, pb: 2, overflow: 'auto', gap: 2 }}>
-
+        <Box sx={{ height: '100%', flexGrow: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', gap: 2 }}>
             {masterGrids.length === 0 ? (
                 <Alert severity="warning">No hay grillas configuradas para este módulo</Alert>
             ) : (
                 masterGrids.map(gridMeta => (
-                    <Box key={gridMeta.idgrid} sx={{ flexGrow: 1, width: '100%', mb: 2 }}>
+                    <Box key={gridMeta.idgrid} sx={{ flexGrow: 1, width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
                         <DynamicGrid
                             gridMeta={gridMeta}
                             idform={idform}

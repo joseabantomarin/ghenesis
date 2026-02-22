@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, TextField, Button, Typography, Grid, MenuItem, Checkbox, FormControlLabel, Paper, Divider } from '@mui/material';
+import { Save as SaveIcon, Close as CancelIcon } from '@mui/icons-material';
 import axios from 'axios';
 import DynamicGrid from './DynamicGrid';
 
@@ -59,8 +60,13 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids }) => {
             let finalRecordId = null;
 
             if (isUpdate) {
-                const pkHierarchy = ['idf', 'idgrid', 'idcontrol', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'idsistema', 'idform', 'id'];
-                const bestPk = pkHierarchy.find(key => record[key] !== undefined);
+                const metaPkField = gridMeta.fields?.find(f => f.pk === true || f.campo === `id${gridMeta.vquery}`);
+                let bestPk = metaPkField ? metaPkField.campo : null;
+
+                if (!bestPk || record[bestPk] === undefined) {
+                    const pkHierarchy = ['idf', 'idgrid', 'idcontrol', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'idsistema', 'idform', 'id'];
+                    bestPk = pkHierarchy.find(key => record[key] !== undefined) || Object.keys(record)[0];
+                }
                 finalRecordId = bestPk ? record[bestPk] : null;
             }
 
@@ -90,169 +96,176 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids }) => {
     };
 
     return (
-        <Paper elevation={0} sx={{ pb: 3 }}>
-            {/* Header Stickyyy */}
-            <Box
-                sx={{
-                    p: 2,
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    // Solo el maestro principal será sticky. Los detalles tendrán header relativo para no superponerse.
-                    position: gridMeta.gparent ? 'relative' : 'sticky',
-                    top: 0,
-                    zIndex: gridMeta.gparent ? 1 : 10,
-                    backgroundColor: gridMeta.gparent ? '#f9f9f9' : 'background.paper',
-                    borderBottom: '1px solid',
-                    borderColor: 'divider',
-                    mb: 3
-                }}
-            >
-                <Typography variant="h6" sx={{ m: 0 }}>
-                    Edición de Registro - {gridMeta.titulo}
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 2 }}>
-                    <Button
-                        onClick={(e) => { e.stopPropagation(); onClose(); }}
-                        variant="outlined"
-                        color="inherit"
-                    >
-                        Cancelar
-                    </Button>
-                    <Button
-                        onClick={(e) => { e.stopPropagation(); handleSave(); }}
-                        variant="contained"
-                        color="primary"
-                    >
-                        Guardar Registro
-                    </Button>
-                </Box>
-            </Box>
+        <Paper elevation={0} sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-            {/* Contenedor del Formulario Real con Grid */}
-            <Box sx={{ px: 3 }}>
-                <Grid container spacing={3}>
-                    {editFields.map(field => {
-                        const value = formData[field.campo] ?? field.valxdefecto ?? '';
+            {/* Contenedor del Formulario Real con Grid (Todo con Scroll) */}
+            <Box sx={{ flexGrow: 1, overflowY: 'auto', pb: 3 }}>
 
-                        // Lógica de renders según tipoD (C, D, F, I, B, W) y valcombo
-                        let InputElement = null;
-
-                        if (field.valcombo || field.sqlcombo) {
-                            // Combobox
-                            let opciones = [];
-                            if (field.valcombo) {
-                                opciones = field.valcombo.split(',').map(v => v.trim());
-                            }
-                            InputElement = (
-                                <TextField
-                                    select
-                                    fullWidth
-                                    size="small"
-                                    label={field.titlefield || field.campo}
-                                    value={value}
-                                    onChange={(e) => handleChange(field.campo, e.target.value)}
-                                    disabled={field.readonly || field.locked}
-                                    required={field.obligatorio}
-                                    error={field.obligatorio && !value}
-                                    InputLabelProps={{ sx: { color: 'var(--primary-color)', fontWeight: 500 } }}
-                                >
-                                    {opciones.map(opt => (
-                                        <MenuItem key={opt} value={opt}>{opt}</MenuItem>
-                                    ))}
-                                </TextField>
-                            );
-                        } else if (field.tipod === 'B') {
-                            // Boolean UI
-                            InputElement = (
-                                <FormControlLabel
-                                    control={
-                                        <Checkbox
-                                            checked={Boolean(value)}
-                                            onChange={(e) => handleChange(field.campo, e.target.checked)}
-                                            disabled={field.readonly || field.locked}
-                                        />
-                                    }
-                                    label={field.titlefield || field.campo}
-                                    sx={{ '& .MuiFormControlLabel-label': { color: 'var(--primary-color)', fontWeight: 500 } }}
-                                />
-                            );
-                        } else if (field.tipod === 'W') {
-                            // Memo / Texto Largo
-                            InputElement = (
-                                <TextField
-                                    fullWidth
-                                    multiline
-                                    rows={field.altomemo || 3}
-                                    label={field.titlefield || field.campo}
-                                    value={value}
-                                    onChange={(e) => handleChange(field.campo, e.target.value)}
-                                    disabled={field.readonly || field.locked}
-                                    required={field.obligatorio}
-                                    InputLabelProps={{ sx: { color: 'var(--primary-color)', fontWeight: 500 } }}
-                                />
-                            );
-                        } else if (field.tipod === 'D') {
-                            // Date
-                            InputElement = (
-                                <TextField
-                                    fullWidth
-                                    size="small"
-                                    type="date"
-                                    label={field.titlefield || field.campo}
-                                    value={value}
-                                    onChange={(e) => handleChange(field.campo, e.target.value)}
-                                    disabled={field.readonly || field.locked}
-                                    InputLabelProps={{ shrink: true, sx: { color: 'var(--primary-color)', fontWeight: 500 } }}
-                                />
-                            )
-                        } else {
-                            // Caracteres, Enteros, Float estándar
-                            InputElement = (
-                                <TextField
-                                    fullWidth
-                                    size="small"
-                                    type={field.tipod === 'I' || field.tipod === 'F' ? 'number' : 'text'}
-                                    label={field.titlefield || field.campo}
-                                    value={value}
-                                    onChange={(e) => {
-                                        let val = e.target.value;
-                                        if (gridMeta.mayusculas && typeof val === 'string') val = val.toUpperCase();
-                                        handleChange(field.campo, val);
-                                    }}
-                                    disabled={field.readonly || field.locked}
-                                    required={field.obligatorio}
-                                    InputLabelProps={{ sx: { color: 'var(--primary-color)', fontWeight: 500 } }}
-                                />
-                            );
-                        }
-
-                        // Por solicitud del usuario, forzamos 2 columnas Desktop (md=6) por defecto, 1 en Mobile (xs=12)
-                        const cols = 6;
-
-                        return (
-                            <Grid item xs={12} md={cols} key={field.idfield || field.campo}>
-                                {InputElement}
-                            </Grid>
-                        );
-                    })}
-                </Grid>
-
-                {/* Sub-Grillas / Detalles */}
-                {allGrids && allGrids.filter(g => g.gparent === gridMeta.idgrid).length > 0 && (
-                    <Box sx={{ mt: 2, pt: 1, borderTop: '2px solid', borderColor: 'divider' }}>
-                        {allGrids.filter(g => g.gparent === gridMeta.idgrid).map(child => (
-                            <Box key={child.idgrid} sx={{ mb: 3 }}>
-                                <DynamicGrid
-                                    gridMeta={child}
-                                    idform={idform}
-                                    masterRecord={record} // Carga la metadata usando el registro oficial 
-                                    allGrids={allGrids}
-                                />
-                            </Box>
-                        ))}
+                {/* Header ahora escroleable */}
+                <Box
+                    sx={{
+                        px: { xs: '5px', sm: 2 },
+                        py: { xs: '5px', sm: 2 },
+                        display: 'flex',
+                        flexDirection: { xs: 'column', sm: 'row' },
+                        justifyContent: 'space-between',
+                        alignItems: { xs: 'flex-start', sm: 'center' },
+                        gap: { xs: 1.5, sm: 0 },
+                        backgroundColor: gridMeta.gparent ? '#f9f9f9' : 'background.paper',
+                        borderBottom: '1px solid',
+                        borderColor: 'divider',
+                        mb: 3
+                    }}
+                >
+                    <Typography variant="h6" sx={{ m: 0, fontSize: { xs: '0.95rem', sm: '1.25rem' }, fontWeight: 'bold', color: 'var(--active-tab-color)', whiteSpace: 'normal', lineHeight: 1.2, mb: { xs: 1, sm: 0 } }}>
+                        Edición - {gridMeta.titulo}
+                    </Typography>
+                    <Box sx={{ display: 'flex', gap: 1, width: { xs: '100%', sm: 'auto' }, boxSizing: 'border-box', justifyContent: { xs: 'space-between', sm: 'flex-start' } }}>
+                        <Button
+                            onClick={(e) => { e.stopPropagation(); onClose(); }}
+                            variant="outlined"
+                            color="inherit"
+                            startIcon={<CancelIcon />}
+                            sx={{ borderRadius: '8px', textTransform: 'none', px: { xs: 1.5, sm: 2 }, py: 0.75, fontWeight: 600, flex: { xs: 1, sm: 'none' } }}
+                        >
+                            Cancelar
+                        </Button>
+                        <Button
+                            onClick={(e) => { e.stopPropagation(); handleSave(); }}
+                            variant="contained"
+                            color="primary"
+                            startIcon={<SaveIcon />}
+                            sx={{ borderRadius: '8px', textTransform: 'none', px: { xs: 1.5, sm: 2 }, py: 0.75, fontWeight: 600, flex: { xs: 1, sm: 'none' } }}
+                        >
+                            Guardar
+                        </Button>
                     </Box>
-                )}
+                </Box>
+
+                <Box sx={{ px: { xs: '5px', sm: 3 }, pt: 1 }}>
+                    <Grid container spacing={3}>
+                        {editFields.map(field => {
+                            const value = formData[field.campo] ?? field.valxdefecto ?? '';
+
+                            // Lógica de renders según tipoD (C, D, F, I, B, W) y valcombo
+                            let InputElement = null;
+
+                            if (field.valcombo || field.sqlcombo) {
+                                // Combobox
+                                let opciones = [];
+                                if (field.valcombo) {
+                                    opciones = field.valcombo.split(',').map(v => v.trim());
+                                }
+                                InputElement = (
+                                    <TextField
+                                        select
+                                        fullWidth
+                                        size="small"
+                                        label={field.titlefield || field.campo}
+                                        value={value}
+                                        onChange={(e) => handleChange(field.campo, e.target.value)}
+                                        disabled={field.readonly || field.locked}
+                                        required={field.obligatorio}
+                                        error={field.obligatorio && !value}
+                                        InputLabelProps={{ sx: { color: 'var(--primary-color)', fontWeight: 500 } }}
+                                    >
+                                        {opciones.map(opt => (
+                                            <MenuItem key={opt} value={opt}>{opt}</MenuItem>
+                                        ))}
+                                    </TextField>
+                                );
+                            } else if (field.tipod === 'B') {
+                                // Boolean UI
+                                InputElement = (
+                                    <FormControlLabel
+                                        control={
+                                            <Checkbox
+                                                checked={Boolean(value)}
+                                                onChange={(e) => handleChange(field.campo, e.target.checked)}
+                                                disabled={field.readonly || field.locked}
+                                            />
+                                        }
+                                        label={field.titlefield || field.campo}
+                                        sx={{ '& .MuiFormControlLabel-label': { color: 'var(--primary-color)', fontWeight: 500 } }}
+                                    />
+                                );
+                            } else if (field.tipod === 'W') {
+                                // Memo / Texto Largo
+                                InputElement = (
+                                    <TextField
+                                        fullWidth
+                                        multiline
+                                        rows={field.altomemo || 3}
+                                        label={field.titlefield || field.campo}
+                                        value={value}
+                                        onChange={(e) => handleChange(field.campo, e.target.value)}
+                                        disabled={field.readonly || field.locked}
+                                        required={field.obligatorio}
+                                        InputLabelProps={{ sx: { color: 'var(--primary-color)', fontWeight: 500 } }}
+                                    />
+                                );
+                            } else if (field.tipod === 'D') {
+                                // Date
+                                InputElement = (
+                                    <TextField
+                                        fullWidth
+                                        size="small"
+                                        type="date"
+                                        label={field.titlefield || field.campo}
+                                        value={value}
+                                        onChange={(e) => handleChange(field.campo, e.target.value)}
+                                        disabled={field.readonly || field.locked}
+                                        InputLabelProps={{ shrink: true, sx: { color: 'var(--primary-color)', fontWeight: 500 } }}
+                                    />
+                                )
+                            } else {
+                                // Caracteres, Enteros, Float estándar
+                                InputElement = (
+                                    <TextField
+                                        fullWidth
+                                        size="small"
+                                        type={field.tipod === 'I' || field.tipod === 'F' ? 'number' : 'text'}
+                                        label={field.titlefield || field.campo}
+                                        value={value}
+                                        onChange={(e) => {
+                                            let val = e.target.value;
+                                            if (gridMeta.mayusculas && typeof val === 'string') val = val.toUpperCase();
+                                            handleChange(field.campo, val);
+                                        }}
+                                        disabled={field.readonly || field.locked}
+                                        required={field.obligatorio}
+                                        InputLabelProps={{ sx: { color: 'var(--primary-color)', fontWeight: 500 } }}
+                                    />
+                                );
+                            }
+
+                            // Por solicitud del usuario, forzamos 2 columnas Desktop (md=6) por defecto, 1 en Mobile (xs=12)
+                            const cols = 6;
+
+                            return (
+                                <Grid item xs={12} md={cols} key={field.idfield || field.campo}>
+                                    {InputElement}
+                                </Grid>
+                            );
+                        })}
+                    </Grid>
+
+                    {/* Sub-Grillas / Detalles */}
+                    {allGrids && allGrids.filter(g => g.gparent === gridMeta.idgrid).length > 0 && (
+                        <Box sx={{ mt: 2, pt: 1, borderTop: '2px solid', borderColor: 'divider' }}>
+                            {allGrids.filter(g => g.gparent === gridMeta.idgrid).map(child => (
+                                <Box key={child.idgrid} sx={{ mb: 3 }}>
+                                    <DynamicGrid
+                                        gridMeta={child}
+                                        idform={idform}
+                                        masterRecord={record} // Carga la metadata usando el registro oficial 
+                                        allGrids={allGrids}
+                                    />
+                                </Box>
+                            ))}
+                        </Box>
+                    )}
+                </Box>
             </Box>
         </Paper>
     );

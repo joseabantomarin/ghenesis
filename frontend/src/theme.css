@@ -1,7 +1,7 @@
 /* Variables Globales de Tema (Theme) para Ghenesis Framework */
 :root {
     /* Color Principal: Se aplica al AppBar de la página */
-    --primary-color: #4C7AAF;
+    --primary-color: #1c3895c4;
     --primary-text-color: #ffffff;
 
     /* Configuración de Grillas (AG Grid) */

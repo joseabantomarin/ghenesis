@@ -18,10 +18,10 @@ function TabPanel(props) {
             id={`simple-tabpanel-${index}`}
             aria-labelledby={`simple-tab-${index}`}
             {...other}
-            style={{ height: '100%', display: value === index ? 'block' : 'none' }}
+            style={{ height: '100%', display: value === index ? 'flex' : 'none', flexDirection: 'column', overflow: 'hidden' }}
         >
             {value === index && (
-                <Box sx={{ pt: 1, pl: 0.5, pr: 2, pb: 2, height: '100%' }}>
+                <Box sx={{ p: 0, height: '100%', pt: 1, pb: 1 }}>
                     {children}
                 </Box>
             )}
@@ -75,7 +75,7 @@ function App() {
     }
 
     return (
-        <Box sx={{ display: 'flex', height: '100vh' }}>
+        <Box sx={{ display: 'flex', height: { xs: 'calc(100vh - 90px)', sm: '100vh' } }}>
             <CssBaseline />
 
             {/* Barra de Navegación Superior */}
@@ -138,7 +138,7 @@ function App() {
                         duration: theme.transitions.duration.enteringScreen,
                     }),
                     marginLeft: 0,
-                    height: '100vh',
+                    height: '100%',
                     overflow: 'hidden'
                 }}
             >
@@ -183,7 +183,7 @@ function App() {
                 </Box>
 
                 {/* Contenido de cada pestaña */}
-                <Box sx={{ flexGrow: 1, overflow: 'auto', bgcolor: '#eaeff1' }}>
+                <Box sx={{ flexGrow: 1, overflow: 'hidden', bgcolor: '#eaeff1', display: 'flex', flexDirection: 'column' }}>
                     {tabs.map((tab) => (
                         <TabPanel key={tab.id} value={activeTab} index={tab.id}>
                             {tab.type === 'home' ? (

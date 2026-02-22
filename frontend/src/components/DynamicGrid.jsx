@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
-    Paper, TextField, CircularProgress, Alert, Button, Box,
+    Paper, TextField, CircularProgress, Alert, Button, Box, Typography,
     IconButton, Tooltip, Menu, MenuItem, useTheme, useMediaQuery
 } from '@mui/material';
 import {
@@ -10,7 +10,9 @@ import {
     NavigateNext as NavigateNextIcon, LastPage as LastPageIcon
 } from '@mui/icons-material';
 import axios from 'axios';
+import * as XLSX from 'xlsx';
 import DynamicForm from './DynamicForm';
+import ConfirmDialog from './ConfirmDialog';
 import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry, AllCommunityModule, themeQuartz } from 'ag-grid-community';
 
@@ -58,6 +60,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
 
     // Estado para Menú de Reportes (Móvil/Desplegable)
     const [anchorEl, setAnchorEl] = useState(null);
+    const [confirmOpen, setConfirmOpen] = useState(false);
     const openMenu = Boolean(anchorEl);
     const handleMenuClick = (event) => setAnchorEl(event.currentTarget);
     const handleMenuClose = () => setAnchorEl(null);
@@ -240,9 +243,13 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
         fetchData(); // Refrescar en caso haya guardado
     };
 
-    const handleDeleteSelected = async () => {
+    const handleDeleteSelected = () => {
         if (!selectedRecord) return;
-        if (!window.confirm(`¿Estás seguro de eliminar el registro seleccionado?`)) return;
+        setConfirmOpen(true);
+    };
+
+    const executeDelete = async () => {
+        setConfirmOpen(false);
 
         // Intentar detectar la Primary Key
         let pkField = Object.keys(selectedRecord).find(k => k.startsWith('id') || k.endsWith('id'));
@@ -263,11 +270,63 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
         }
     };
 
-    const handleExportCsv = () => {
-        if (gridRef.current) {
-            gridRef.current.api.exportDataAsCsv({
-                fileName: `${gridMeta.titulo || 'Exportacion'}.csv`
-            });
+    const handleExportXlsx = async () => {
+        if (!gridRef.current) return;
+
+        // Obtener las columnas visibles (respetando el orden actual)
+        const cols = gridRef.current.api.getColumnDefs();
+        const headers = cols.map(c => c.headerName || c.field);
+        const fields = cols.map(c => c.field);
+
+        try {
+            // Pedir TODOS los registros al backend (limit=0 = sin paginación)
+            // respetando el orden y filtros actuales
+            const params = {
+                page: 1,
+                limit: 0,
+                ...(sortField && { sortField, sortOrder }),
+                ...(gridFilters && { filters: JSON.stringify(gridFilters) })
+            };
+
+            // Inyectar parámetros master-detail si aplica
+            if (gridMeta.gparent && masterRecord) {
+                params.masterField = gridMeta.fieldgroup || '';
+                let mValue;
+                if (gridMeta.fieldgroup) {
+                    mValue = masterRecord[gridMeta.fieldgroup]
+                        ?? masterRecord[gridMeta.fieldgroup.toLowerCase()];
+                }
+                if (mValue === undefined) {
+                    const pkHierarchy = ['idf', 'idgrid', 'idform', 'idcontrol', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'idsistema', 'id'];
+                    const bestPk = pkHierarchy.find(key => masterRecord[key] !== undefined);
+                    if (bestPk) mValue = masterRecord[bestPk];
+                }
+                if (mValue === undefined && Object.keys(masterRecord).length > 0) {
+                    mValue = masterRecord[Object.keys(masterRecord)[0]];
+                }
+                params.masterValue = mValue;
+                params.masterRecordPayload = JSON.stringify(masterRecord);
+            }
+
+            const res = await axios.get(`/api/dynamic/data/${idform}/${gridMeta.idgrid}`, { params });
+
+            if (!res.data.success) {
+                alert('Error al exportar: ' + (res.data.error || 'Error desconocido'));
+                return;
+            }
+
+            // Construir filas a partir de la respuesta completa del servidor
+            const allData = res.data.data || [];
+            const rows = allData.map(record => fields.map(f => record[f] ?? ''));
+
+            // Construir hoja Excel
+            const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, gridMeta.titulo || 'Datos');
+            XLSX.writeFile(wb, `${gridMeta.titulo || 'Exportacion'}.xlsx`);
+        } catch (err) {
+            console.error('Error exportando XLSX', err);
+            alert('Ocurrió un error al exportar los datos.');
         }
     };
 
@@ -291,16 +350,28 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
     }
 
     return (
-        <Paper elevation={3} sx={{ width: '100%', display: 'flex', flexDirection: 'column', minHeight: '500px' }}>
-            <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: 1, borderColor: 'divider' }}>
-                <Box>
-                    <Box component="span" sx={{ fontWeight: 'bold', fontSize: '1.2rem', color: 'var(--active-tab-color)' }}>
+        <Paper elevation={3} sx={{ width: '100%', height: gridMeta.gparent ? '500px' : '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            {/* Header: Titulo y Botones */}
+            <Box sx={{
+                pl: { xs: 1.5, sm: 1 },
+                pr: { xs: 0, sm: 1 },
+                py: { xs: 1.5, sm: 2 },
+                display: 'flex',
+                flexDirection: { xs: 'column', sm: 'row' },
+                justifyContent: 'space-between',
+                alignItems: { xs: 'flex-start', sm: 'center' },
+                borderBottom: 1,
+                borderColor: 'divider',
+                gap: { xs: 1, sm: 0 }
+            }}>
+                <Box sx={{ flex: 1, minWidth: 0, width: { xs: '100%', sm: 'auto' }, pr: { sm: 2 } }}>
+                    <Typography noWrap sx={{ fontWeight: 'bold', fontSize: { xs: '1rem', sm: '1.2rem' }, color: 'var(--active-tab-color)', m: 0 }}>
                         {gridMeta.titulo}
-                    </Box>
+                    </Typography>
                 </Box>
                 {/* Barra de Herramientas Principal */}
                 {!gridMeta.ocultabar && (
-                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexShrink: 0, width: { xs: '100%', sm: 'auto' }, overflowX: 'auto', pb: { xs: 0.5, sm: 0 }, '&::-webkit-scrollbar': { display: 'none' } }}>
                         <Button
                             variant="outlined"
                             color="success"
@@ -325,6 +396,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                         <Button
                             variant="outlined"
                             color="error"
+                            disableFocusRipple
                             disabled={!selectedRecord || gridMeta.readonlyg}
                             onClick={handleDeleteSelected}
                             startIcon={isMobile ? null : <DeleteIcon />}
@@ -346,7 +418,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
 
                         <IconButton
                             color="info"
-                            onClick={handleExportCsv}
+                            onClick={handleExportXlsx}
                             sx={{ borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38 }}
                         >
                             <DownloadIcon />
@@ -390,7 +462,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                     </Box>
                 )}
                 {/* Tema AG Grid "Quartz" inyectado vía Theming API (V35+) */}
-                <div style={{ height: 400, width: '100%' }}>
+                <Box sx={{ flexGrow: 1, height: '100%', width: '100%' }}>
                     <AgGridReact
                         ref={gridRef}
                         theme={myTheme}
@@ -423,12 +495,26 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                             }
                         }}
                     />
-                </div>
+                </Box>
             </Box>
 
             {/* Custom Paginator as requested in Fig 2 */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 2, borderTop: '1px solid', borderColor: 'divider', flexWrap: 'wrap' }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Box sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: { xs: 0.5, sm: 1 },
+                pl: { xs: 1.5, sm: 1 },
+                pr: { xs: 0, sm: 1 },
+                py: { xs: 1, sm: 2 },
+                borderTop: '1px solid',
+                borderColor: 'divider',
+                flexWrap: 'nowrap',
+                overflowX: 'auto',
+                whiteSpace: 'nowrap',
+                '&::-webkit-scrollbar': { height: '4px' },
+                '&::-webkit-scrollbar-thumb': { backgroundColor: '#ccc', borderRadius: '4px' }
+            }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1 } }}>
                     <Box component="span" sx={{ fontWeight: 'bold', fontSize: '0.875rem' }}>RxP:</Box>
                     <TextField
                         select
@@ -436,21 +522,22 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                         value={rowsPerPage}
                         onChange={handleChangeRowsPerPage}
                         sx={{
-                            width: 75,
+                            minWidth: 65,
+                            width: 65,
                             '& .MuiOutlinedInput-root': { borderRadius: '8px', bgcolor: '#f4f6f8' },
-                            '& .MuiSelect-select': { py: 0.5 }
+                            '& .MuiSelect-select': { py: 0.5, pl: 1, pr: 2 }
                         }}
                     >
                         {[10, 25, 50, 100].map(val => <MenuItem key={val} value={val}>{val}</MenuItem>)}
                     </TextField>
                 </Box>
 
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: { xs: 0, sm: 2 } }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: { xs: 0.5, sm: 2 } }}>
                     <Button variant="outlined" sx={{ minWidth: 36, width: 36, p: 0.5, borderRadius: '8px', borderColor: '#ccc', color: '#555' }} disabled={page === 0} onClick={() => setPage(0)}><FirstPageIcon fontSize="small" /></Button>
                     <Button variant="outlined" sx={{ minWidth: 36, width: 36, p: 0.5, borderRadius: '8px', borderColor: '#ccc', color: '#555' }} disabled={page === 0} onClick={() => setPage(page - 1)}><NavigateBeforeIcon fontSize="small" /></Button>
                 </Box>
 
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: { xs: 0, sm: 1 } }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1 }, ml: { xs: 0.5, sm: 1 } }}>
                     <Box component="span" sx={{ fontWeight: 'bold', fontSize: '0.875rem' }}>Pag:</Box>
                     <TextField
                         size="small"
@@ -461,19 +548,30 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                             if (!isNaN(p) && p >= 1 && p <= maxPage) setPage(p - 1);
                         }}
                         sx={{
-                            width: 60,
+                            width: 50,
+                            minWidth: 50,
                             '& .MuiOutlinedInput-root': { borderRadius: '8px', bgcolor: '#f4f6f8' },
-                            '& input': { textAlign: 'center', p: '4.5px 14px' }
+                            '& input': { textAlign: 'center', p: '4.5px 8px' }
                         }}
                     />
                     <Box component="span" sx={{ fontSize: '0.875rem', mx: 0.5 }}>/ {Math.ceil(totalRecords / rowsPerPage) || 1}</Box>
                 </Box>
 
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: { xs: 0, sm: 1 } }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: { xs: 0.5, sm: 1 } }}>
                     <Button variant="outlined" sx={{ minWidth: 36, width: 36, p: 0.5, borderRadius: '8px', borderColor: '#ccc', color: '#555' }} disabled={page >= (Math.ceil(totalRecords / rowsPerPage) - 1)} onClick={() => setPage(page + 1)}><NavigateNextIcon fontSize="small" /></Button>
                     <Button variant="outlined" sx={{ minWidth: 36, width: 36, p: 0.5, borderRadius: '8px', borderColor: '#ccc', color: '#555' }} disabled={page >= (Math.ceil(totalRecords / rowsPerPage) - 1)} onClick={() => setPage(Math.ceil(totalRecords / rowsPerPage) - 1)}><LastPageIcon fontSize="small" /></Button>
                 </Box>
             </Box>
+            {/* Diálogo de Confirmación para Eliminar */}
+            <ConfirmDialog
+                open={confirmOpen}
+                title="Eliminar registro"
+                message="¿Estás seguro de que deseas eliminar el registro seleccionado? Esta acción no se puede deshacer."
+                confirmText="Eliminar"
+                cancelText="Cancelar"
+                onConfirm={executeDelete}
+                onCancel={() => setConfirmOpen(false)}
+            />
         </Paper >
     );
 };
