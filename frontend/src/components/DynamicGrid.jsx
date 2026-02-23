@@ -29,18 +29,28 @@ const myTheme = themeQuartz.withParams({
     columnBorder: true,
     borderColor: '#dde2eb',
 
+    // Aplicar color de fondo de selección (o el que decida el usuario) a las cajas de filtro
+    inputBackgroundColor: 'var(--grid-selected-row-bg)',
+    inputBorderColor: 'transparent',
+    inputFocusBorderColor: 'var(--primary-color)',
+    inputHeight: 26, // Altura interna reducida para que no se vea "ajustado" en los 38px
+    fontSize: 13,    // Tamaño de fuente ligeramente menor para el grid
+
     // Variables nativas para forzar Checkbox: Borde primary, tick primary, interior blanco (sin relleno sólido)
     accentColor: 'var(--primary-color)',
     checkboxBorderWidth: 2,
     checkboxCheckedShape: 'tick',
 
     // Oculta el fondo redondo gris-celeste de hover en la cabecera
-    iconButtonHoverBackgroundColor: 'transparent'
+    iconButtonHoverBackgroundColor: 'transparent',
+
+    // Centrar títulos de columnas y grupos
+    headerColumnTitleTextAlign: 'center',
+    headerColumnGroupTitleTextAlign: 'center'
 });
 
-const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sactivateData }) => {
+const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sactivateData, readonlyMode }) => {
     const gridRef = useRef();
-    const activeFilterColRef = useRef(null);
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
     const [data, setData] = useState([]);
@@ -69,52 +79,82 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
     const handleMenuClose = () => setAnchorEl(null);
 
     // Mapear Columnas de Ghenesis a AG-Grid
+    // Usamos gridMeta.idgrid como dependencia principal para asegurar estabilidad
     const columnDefs = useMemo(() => {
+        // Incluimos campos ocultos si tienen "cabeza", para que actúen como columnas expandibles
         const fields = (gridMeta.fields || [])
-            .filter(f => !f.oculto)
+            .filter(f => !f.oculto || (f.cabeza && f.cabeza.trim() !== ''))
             .sort((a, b) => a.posicion - b.posicion);
 
-        // Restaurar estado guardado (orden + anchos)
-        let savedState = {}; // { campo: { width, index } }
+        let savedState = {};
         try {
             const stored = localStorage.getItem(`grid-col-state-${gridMeta.idgrid}`);
             if (stored) savedState = JSON.parse(stored);
         } catch (e) { }
 
-        let defs = fields.map(f => ({
-            field: f.campo,
-            headerName: f.titlefield || f.campo,
-            initialWidth: savedState[f.campo]?.width || f.ancho || 150,
-            minWidth: f.ancho || undefined,
-            wrapText: true,
-            autoHeight: true,
-            wrapHeaderText: false,
-            autoHeaderHeight: false,
-            headerTooltip: f.titlefield || f.campo,
-            tooltipField: f.campo,
-            cellRenderer: f.tipod === 'B' ? 'agCheckboxCellRenderer' : undefined,
-            cellStyle: {
-                textAlign: f.alinear === 'D' ? 'right' : f.alinear === 'C' ? 'center' : 'left',
-                backgroundColor: f.color || undefined,
-                color: f.fontcolor || undefined,
-                fontWeight: f.fontbold ? 'bold' : 'normal'
-            },
-            valueFormatter: f.tipod !== 'B' ? (params) => {
-                return params.value;
-            } : undefined
-        }));
-
-        // Reordenar según el orden guardado
+        // Si hay estado guardado, respetar el orden de las columnas del usuario
         if (Object.keys(savedState).length > 0) {
-            defs.sort((a, b) => {
-                const ia = savedState[a.field]?.index ?? 999;
-                const ib = savedState[b.field]?.index ?? 999;
+            fields.sort((a, b) => {
+                const ia = savedState[a.campo]?.index ?? 999;
+                const ib = savedState[b.campo]?.index ?? 999;
                 return ia - ib;
             });
         }
 
+        const defs = [];
+        let currentGroup = null;
+
+        fields.forEach(f => {
+            const colDef = {
+                field: f.campo,
+                headerName: f.titlefield || f.campo,
+                initialWidth: savedState[f.campo]?.width || f.ancho || 150,
+                minWidth: f.ancho || undefined,
+                wrapText: true,
+                autoHeight: true,
+                wrapHeaderText: false,
+                autoHeaderHeight: false,
+                headerTooltip: f.titlefield || f.campo,
+                cellRenderer: f.tipod === 'B' ? 'agCheckboxCellRenderer' : undefined,
+                cellStyle: {
+                    textAlign: f.alinear === 'D' ? 'right' : f.alinear === 'C' ? 'center' : 'left',
+                    backgroundColor: f.color || undefined,
+                    color: f.fontcolor || undefined,
+                    fontWeight: f.fontbold ? 'bold' : 'normal'
+                }
+            };
+
+            if (f.cabeza && f.cabeza.trim() !== '') {
+                // Si la columna tiene "cabeza", agruparla
+                // Lógica Ghenesis: los campos marcados como 'oculto' dentro de un grupo 
+                // se consideran columnas de "detalle" (solo se ven al expandir)
+                if (f.oculto) {
+                    colDef.columnGroupShow = 'open';
+                }
+
+                if (currentGroup && currentGroup.headerName === f.cabeza) {
+                    currentGroup.children.push(colDef);
+                } else {
+                    currentGroup = {
+                        headerName: f.cabeza,
+                        children: [colDef],
+                        marryChildren: false, // Permitir que se expandan/colapsen
+                        openByDefault: false   // Empezar colapsado
+                    };
+                    defs.push(currentGroup);
+                }
+            } else {
+                currentGroup = null;
+                defs.push(colDef);
+            }
+        });
+
         return defs;
-    }, [gridMeta]);
+    }, [gridMeta.idgrid, gridMeta.fields]);
+
+    const hasGroups = useMemo(() => {
+        return (gridMeta.fields || []).some(f => f.cabeza && f.cabeza.trim() !== '');
+    }, [gridMeta.fields]);
 
     // Guardar estado completo de columnas (orden + anchos)
     const saveColumnState = (api) => {
@@ -132,8 +172,21 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
         if (e.finished) saveColumnState(e.api);
     };
 
+
+    // --- MEJORA: Determinación de Row ID para mantener estado de la UI (filtros, scroll) ---
+    const getRowId = useMemo(() => {
+        return (params) => {
+            const d = params.data;
+            const pkHierarchy = [
+                'idfield', 'idcontrol', 'idgrid', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile',
+                'iduser', 'idrole', 'idacademia', 'idcurso', 'idform', 'idsistema', 'id'
+            ];
+            const bestPk = pkHierarchy.find(key => d[key] !== undefined) || Object.keys(d)[0];
+            return String(d[bestPk] || Math.random());
+        };
+    }, []);
+
     const fetchData = async () => {
-        // Pausar fetch si es grilla hija pero no se le ha pasado el registro padre
         if (gridMeta.gparent && !masterRecord) {
             setData([]);
             setTotalRecords(0);
@@ -141,27 +194,8 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
         }
 
         setLoading(true);
-        setSelectedRecord(null); // Reset selection on reload/page change
 
-        // --- INTERCEPTOR SACTIVATE ---
-        const inyectedData = sactivateData?.[gridMeta.vquery] || (sactivateData?.gridData && !gridMeta.gparent ? sactivateData.gridData : null);
-
-        // Si el controlador en backend delegó todo y no hay orden ni filtro nativo, usamos el cache local
-        // ATENCIÓN: Solo usamos el caché inyectado genérico si NO somos una grilla hija
-        if (inyectedData && Array.isArray(inyectedData) && !sortField && !gridFilters) {
-            let processedData = [...inyectedData];
-
-            const startIndex = page * rowsPerPage;
-            const pagedData = processedData.slice(startIndex, startIndex + rowsPerPage);
-
-            setData(pagedData);
-            setTotalRecords(processedData.length);
-            setLoading(false);
-            return;
-        }
-        // -----------------------------
         try {
-            // El backend espera page (1-based), limit y filtros dinámicos
             const params = {
                 page: page + 1,
                 limit: rowsPerPage,
@@ -169,39 +203,14 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                 ...(gridFilters && { filters: JSON.stringify(gridFilters) })
             };
 
-            // Inyectamos las variables relacionales para el SQL WHERE
             if (gridMeta.gparent && masterRecord) {
-                // Si existe fieldgroup se manda al backend, si no, se manda una cadena vacía
-                params.masterField = gridMeta.fieldgroup || '';
+                // Determinar el campo de enlace (Foreign Key) en la grilla detallle.
+                // Por convención, usamos el nombre de la PK del registro maestro.
+                const pkHierarchy = ['idfield', 'idcontrol', 'idgrid', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'iduser', 'idrole', 'idacademia', 'idcurso', 'idform', 'idsistema', 'id'];
+                const masterPkField = pkHierarchy.find(key => masterRecord[key] !== undefined) || Object.keys(masterRecord)[0];
 
-                let mValue;
-
-                // Intentamos extraer el valor usando el fieldgroup exacto si existe
-                if (gridMeta.fieldgroup) {
-                    mValue = masterRecord[gridMeta.fieldgroup];
-
-                    // Fallback 1: Buscar versión en minúsculas (a veces PostgreSQL devuelve columnas en minúsculas)
-                    if (mValue === undefined) {
-                        mValue = masterRecord[gridMeta.fieldgroup.toLowerCase()];
-                    }
-                }
-
-                // Fallback 2: Buscar cualquier llave principal candidata si fieldgroup es nulo o falló
-                if (mValue === undefined) {
-                    const pkHierarchy = ['idf', 'idgrid', 'idform', 'idcontrol', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'idsistema', 'id'];
-                    const bestPk = pkHierarchy.find(key => masterRecord[key] !== undefined);
-                    if (bestPk) mValue = masterRecord[bestPk];
-                }
-
-                // Fallback 3: Si todo falla, coger el primer valor del registro (usualmente el ID)
-                if (mValue === undefined && Object.keys(masterRecord).length > 0) {
-                    mValue = masterRecord[Object.keys(masterRecord)[0]];
-                }
-
-                params.masterValue = mValue;
-
-                // Transferir absolutamente todo el registro padre convertido a JSON 
-                // para que cualquier script (sopen, etc) pueda acceder a cualquiera de sus variables.
+                params.masterField = masterPkField;
+                params.masterValue = masterRecord[masterPkField];
                 params.masterRecordPayload = JSON.stringify(masterRecord);
             }
 
@@ -220,7 +229,6 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
         }
     };
 
-    // Fetch ÚNICO: Reacciona a cambios reales en la paginación, orden, filtros o registros padre
     useEffect(() => {
         fetchData();
     }, [page, rowsPerPage, sortField, sortOrder, gridFilters, gridMeta.idgrid, masterRecord, sactivateData]);
@@ -239,7 +247,6 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
         const rec = selectedRows.length > 0 ? selectedRows[0] : null;
         setSelectedRecord(rec);
 
-        // Calcular índice absoluto de la fila seleccionada (página + posición en grilla)
         if (rec) {
             let rowIdx = null;
             gridRef.current.api.forEachNodeAfterFilterAndSort((node, index) => {
@@ -250,35 +257,26 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
             setSelectedRowIndex(null);
         }
 
-        // Disparar evento al padre DynamicView (Master-Detail orchestration)
         if (onRowSelect) {
             onRowSelect(gridMeta.idgrid, rec);
         }
     };
 
     const handleSortChanged = (e) => {
-        // En AG Grid las versiones nuevas usan getColumnState en lugar de getSortModel
         const sortState = e.api.getColumnState().find(s => s.sort != null);
         if (sortState) {
             setSortField(sortState.colId);
-            setSortOrder(sortState.sort); // 'asc' o 'desc'
+            setSortOrder(sortState.sort);
         } else {
             setSortField(null);
             setSortOrder(null);
         }
-        setPage(0); // Regresar a la primera página al ordenar
+        setPage(0);
     };
 
     const handleFilterChanged = (e) => {
         const filterModel = e.api.getFilterModel();
-        const activeFilterCols = Object.keys(filterModel);
-        if (activeFilterCols.length > 0) {
-            activeFilterColRef.current = activeFilterCols[activeFilterCols.length - 1];
-            setGridFilters(filterModel);
-        } else {
-            // No limpiar activeFilterColRef — onRowDataUpdated lo reabrirá
-            setGridFilters(null);
-        }
+        setGridFilters(filterModel);
         setPage(0);
     };
 
@@ -290,7 +288,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
 
     const closeEdit = () => {
         setEditingRecord(null);
-        fetchData(); // Refrescar en caso haya guardado
+        fetchData();
     };
 
     const handleDeleteSelected = () => {
@@ -300,17 +298,14 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
 
     const executeDelete = async () => {
         setConfirmOpen(false);
-
-        // Intentar detectar la Primary Key
         let pkField = Object.keys(selectedRecord).find(k => k.startsWith('id') || k.endsWith('id'));
-        if (!pkField) pkField = Object.keys(selectedRecord)[0]; // Fallback
-
+        if (!pkField) pkField = Object.keys(selectedRecord)[0];
         const id = selectedRecord[pkField];
 
         try {
             const res = await axios.delete(`/api/dynamic/data/${idform}/${gridMeta.idgrid}/${id}`);
             if (res.data.success) {
-                fetchData(); // Recargar grilla
+                fetchData();
             } else {
                 alert('Error al eliminar: ' + res.data.error);
             }
@@ -322,54 +317,34 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
 
     const handleExportXlsx = async () => {
         if (!gridRef.current) return;
-
-        // Obtener las columnas visibles (respetando el orden actual)
         const cols = gridRef.current.api.getColumnDefs();
         const headers = cols.map(c => c.headerName || c.field);
         const fields = cols.map(c => c.field);
 
         try {
-            // Pedir TODOS los registros al backend (limit=0 = sin paginación)
-            // respetando el orden y filtros actuales
             const params = {
-                page: 1,
-                limit: 0,
+                page: 1, limit: 0,
                 ...(sortField && { sortField, sortOrder }),
                 ...(gridFilters && { filters: JSON.stringify(gridFilters) })
             };
 
-            // Inyectar parámetros master-detail si aplica
             if (gridMeta.gparent && masterRecord) {
-                params.masterField = gridMeta.fieldgroup || '';
-                let mValue;
-                if (gridMeta.fieldgroup) {
-                    mValue = masterRecord[gridMeta.fieldgroup]
-                        ?? masterRecord[gridMeta.fieldgroup.toLowerCase()];
-                }
-                if (mValue === undefined) {
-                    const pkHierarchy = ['idf', 'idgrid', 'idform', 'idcontrol', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'idsistema', 'id'];
-                    const bestPk = pkHierarchy.find(key => masterRecord[key] !== undefined);
-                    if (bestPk) mValue = masterRecord[bestPk];
-                }
-                if (mValue === undefined && Object.keys(masterRecord).length > 0) {
-                    mValue = masterRecord[Object.keys(masterRecord)[0]];
-                }
-                params.masterValue = mValue;
+                const pkHierarchy = ['idfield', 'idcontrol', 'idgrid', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'iduser', 'idrole', 'idacademia', 'idcurso', 'idform', 'idsistema', 'id'];
+                const masterPkField = pkHierarchy.find(key => masterRecord[key] !== undefined) || Object.keys(masterRecord)[0];
+
+                params.masterField = masterPkField;
+                params.masterValue = masterRecord[masterPkField];
                 params.masterRecordPayload = JSON.stringify(masterRecord);
             }
 
             const res = await axios.get(`/api/dynamic/data/${idform}/${gridMeta.idgrid}`, { params });
-
             if (!res.data.success) {
                 alert('Error al exportar: ' + (res.data.error || 'Error desconocido'));
                 return;
             }
 
-            // Construir filas a partir de la respuesta completa del servidor
             const allData = res.data.data || [];
             const rows = allData.map(record => fields.map(f => record[f] ?? ''));
-
-            // Construir hoja Excel
             const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, gridMeta.titulo || 'Datos');
@@ -386,7 +361,6 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
 
     if (error) return <Alert severity="error">{error}</Alert>;
 
-    // Si estamos en modo edición, renderizamos el DynamicForm
     if (editingRecord) {
         return (
             <DynamicForm
@@ -395,6 +369,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                 record={editingRecord}
                 onClose={closeEdit}
                 allGrids={allGrids}
+                readonlyMode={readonlyMode}
             />
         );
     }
@@ -405,7 +380,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
             <Box sx={{
                 pl: { xs: 1.5, sm: 1 },
                 pr: { xs: 0, sm: 1 },
-                py: { xs: 1.5, sm: 2 },
+                py: { xs: 1, sm: 1.2 },
                 display: 'flex',
                 flexDirection: { xs: 'column', sm: 'row' },
                 justifyContent: 'space-between',
@@ -415,26 +390,26 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                 gap: { xs: 1, sm: 0 }
             }}>
                 <Box sx={{ flex: 1, minWidth: 0, width: { xs: '100%', sm: 'auto' }, pr: { sm: 2 } }}>
-                    <Typography noWrap sx={{ fontWeight: 'bold', fontSize: { xs: '1rem', sm: '1.2rem' }, color: 'var(--active-tab-color)', m: 0 }}>
+                    <Typography noWrap sx={{ fontWeight: 'bold', fontSize: { xs: '0.9rem', sm: '1.05rem' }, color: 'var(--active-tab-color)', m: 0 }}>
                         {gridMeta.titulo}
                     </Typography>
                 </Box>
                 {/* Barra de Herramientas Principal */}
                 {!gridMeta.ocultabar && (
                     <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexShrink: 0, width: { xs: '100%', sm: 'auto' }, overflowX: 'auto', pb: { xs: 0.5, sm: 0 }, '&::-webkit-scrollbar': { display: 'none' } }}>
-                        <Button
-                            variant="outlined"
-                            color="success"
-                            onClick={() => setEditingRecord({})}
-                            startIcon={isMobile ? null : <AddIcon />}
-                            sx={{ borderRadius: '8px', textTransform: 'none', px: isMobile ? 1 : 2, py: 0.75, minWidth: isMobile ? 40 : 'auto', fontWeight: 600 }}
-                        >
-                            {isMobile ? <AddIcon /> : "Nuevo"}
-                        </Button>
+                        {!readonlyMode && (
+                            <Button
+                                variant="outlined" color="success"
+                                onClick={() => setEditingRecord({})}
+                                startIcon={isMobile ? null : <AddIcon />}
+                                sx={{ borderRadius: '8px', textTransform: 'none', px: isMobile ? 1 : 2, py: 0.75, minWidth: isMobile ? 40 : 'auto', fontWeight: 600 }}
+                            >
+                                {isMobile ? <AddIcon /> : "Nuevo"}
+                            </Button>
+                        )}
 
                         <Button
-                            variant="outlined"
-                            color="primary"
+                            variant="outlined" color="primary"
                             disabled={!selectedRecord || gridMeta.readonlyg}
                             onClick={handleEditSelected}
                             startIcon={isMobile ? null : <EditIcon />}
@@ -443,56 +418,37 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                             {isMobile ? <EditIcon /> : "Editar"}
                         </Button>
 
-                        <Button
-                            variant="outlined"
-                            color="error"
-                            disableFocusRipple
-                            disabled={!selectedRecord || gridMeta.readonlyg}
-                            onClick={handleDeleteSelected}
-                            startIcon={isMobile ? null : <DeleteIcon />}
-                            sx={{ borderRadius: '8px', textTransform: 'none', px: isMobile ? 1 : 2, py: 0.75, minWidth: isMobile ? 40 : 'auto', fontWeight: 600 }}
-                        >
-                            {isMobile ? <DeleteIcon /> : "Borrar"}
-                        </Button>
+                        {!readonlyMode && (
+                            <Button
+                                variant="outlined" color="error" disableFocusRipple
+                                disabled={!selectedRecord || gridMeta.readonlyg}
+                                onClick={handleDeleteSelected}
+                                startIcon={isMobile ? null : <DeleteIcon />}
+                                sx={{ borderRadius: '8px', textTransform: 'none', px: isMobile ? 1 : 2, py: 0.75, minWidth: isMobile ? 40 : 'auto', fontWeight: 600 }}
+                            >
+                                {isMobile ? <DeleteIcon /> : "Borrar"}
+                            </Button>
+                        )}
 
-                        {/* Divisor vertical */}
                         <Box sx={{ borderLeft: '1px solid', borderColor: 'divider', height: 28, mx: 0.5 }}></Box>
 
-                        <IconButton
-                            onClick={fetchData}
-                            color="default"
-                            sx={{ borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38 }}
-                        >
+                        <IconButton onClick={() => fetchData()} color="default" sx={{ borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38 }}>
                             <RefreshIcon />
                         </IconButton>
 
-                        <IconButton
-                            color="info"
-                            onClick={handleExportXlsx}
-                            sx={{ borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38 }}
-                        >
+                        <IconButton color="info" onClick={handleExportXlsx} sx={{ borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38 }}>
                             <DownloadIcon />
                         </IconButton>
 
-                        {/* Menú Desplegable Adicional (Reportes / Más) */}
                         <Tooltip title="Más opciones">
-                            <IconButton
-                                color="default"
-                                onClick={handleMenuClick}
-                                sx={{ borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38 }}
-                            >
+                            <IconButton color="default" onClick={handleMenuClick} sx={{ borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38 }}>
                                 <MoreVertIcon />
                             </IconButton>
                         </Tooltip>
 
                         <Menu
-                            anchorEl={anchorEl}
-                            open={openMenu}
-                            onClose={handleMenuClose}
-                            PaperProps={{
-                                elevation: 3,
-                                sx: { mt: 1.5, minWidth: 150 }
-                            }}
+                            anchorEl={anchorEl} open={openMenu} onClose={handleMenuClose}
+                            PaperProps={{ elevation: 3, sx: { mt: 1.5, minWidth: 150 } }}
                             transformOrigin={{ horizontal: 'right', vertical: 'top' }}
                             anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
                         >
@@ -507,59 +463,54 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
 
             <Box sx={{ flexGrow: 1, width: '100%', position: 'relative', display: 'flex', flexDirection: 'column' }}>
                 {loading && (
-                    <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255, 255, 255, 0.5)' }}>
+                    <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255, 255, 255, 0.1)' }}>
                         <CircularProgress />
                     </Box>
                 )}
-                {/* Tema AG Grid "Quartz" inyectado vía Theming API (V35+) */}
-                <Box sx={{ flexGrow: 1, height: '100%', width: '100%' }}>
+                <Box sx={{ flexGrow: 1, width: '100%' }}>
                     <AgGridReact
                         ref={gridRef}
                         theme={myTheme}
                         rowData={data}
                         columnDefs={columnDefs}
+                        getRowId={getRowId}
                         rowSelection={{ mode: 'singleRow', checkboxes: false }}
                         onSelectionChanged={handleSelectionChanged}
                         onSortChanged={handleSortChanged}
                         onFilterChanged={handleFilterChanged}
                         onColumnResized={handleColumnResized}
                         onColumnMoved={handleColumnMoved}
-                        onRowDataUpdated={() => {
-                            // Re-abrir popup de filtro
-                            if (activeFilterColRef.current) {
-                                const colId = activeFilterColRef.current;
-                                try { gridRef.current?.api?.showColumnFilter(colId); } catch (e) { }
-                            }
-                        }}
                         onCellFocused={(e) => {
-                            if (e.rowIndex !== null && e.api) {
-                                const rowNode = e.api.getDisplayedRowAtIndex(e.rowIndex);
-                                if (rowNode && !rowNode.isSelected()) {
-                                    rowNode.setSelected(true, true);
-                                }
-                            }
-                            // Actualizar texto de ayuda según la columna enfocada
                             if (e.column) {
                                 const colId = e.column.getColId();
                                 const fieldMeta = (gridMeta.fields || []).find(f => f.campo === colId);
-                                if (fieldMeta) {
-                                    setFocusedHelpText(fieldMeta.ayuda || fieldMeta.titlefield || colId);
-                                }
+                                if (fieldMeta) setFocusedHelpText(fieldMeta.ayuda || fieldMeta.titlefield || colId);
                             }
                         }}
-                        enableBrowserTooltips={true} // Obligatorio para que emerja el hint nativo del navegador
-                        animateRows={false} // CRÍTICO: Desactivamos la animación de filas
-                        rowHeight={gridMeta.altofila || 40} // Altura base predeterminada
-                        headerHeight={45}
-                        // Las columnas gestionarán la UI de sort pero NO lo harán en el cliente
+                        onCellClicked={(e) => {
+                            // Seleccionar fila al hacer clic para activar botones (Editar, Borrar)
+                            if (e.node && !e.node.isSelected()) {
+                                e.node.setSelected(true, true);
+                            }
+                        }}
+                        enableBrowserTooltips={false}
+                        tooltipShowDelay={0}
+                        animateRows={false}
+                        rowHeight={gridMeta.altofila || 36}
+                        headerHeight={38}
+                        groupHeaderHeight={hasGroups ? 38 : 0}
+                        floatingFiltersHeight={38}
                         defaultColDef={{
                             sortable: true,
                             filter: true,
+                            floatingFilter: true,
                             resizable: true,
-                            unSortIcon: true, // Mostrar siempre el icono para invitar a hacer click
+                            unSortIcon: true,
+                            suppressMenuHide: true,
                             filterParams: {
-                                debounceMs: 300,       // Esperar 300ms después de escribir antes de filtrar
-                                closeOnApply: false     // No cerrar el popup al filtrar, solo al hacer click afuera
+                                buttons: ['clear'], // Solo 'clear' para permitir búsqueda reactiva sin botón 'apply'
+                                debounceMs: 500,    // Espera 500ms tras dejar de escribir para filtrar automáticamente
+                                closeOnApply: false
                             }
                         }}
                     />

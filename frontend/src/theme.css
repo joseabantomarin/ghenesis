@@ -7,7 +7,7 @@
     /* Configuración de Grillas (AG Grid) */
     --grid-header-bg: #79A4F7;
     --grid-header-color: #ffffff;
-    --grid-selected-row-bg: #4c78af43;
+    --grid-selected-row-bg: #e3edff;
 
     /* Pestañas y Títulos */
     --active-tab-color: #1240ea;
@@ -29,4 +29,11 @@
 /* Quitar los puntos suspensivos ("...") de los cabezales cuando el texto es largo */
 .ag-header-cell-text {
     text-overflow: clip !important;
+}
+
+/* Centrar títulos de cabecera y grupos */
+.ag-header-cell-label,
+.ag-header-group-cell-label {
+    justify-content: center !important;
+    text-align: center;
 }

@@ -235,7 +235,7 @@ exports.saveGridData = async (req, res) => {
     try {
         const idform = Number(req.params.idform);
         const idgrid = Number(req.params.idgrid);
-        const { data, isUpdate, recordId } = req.body;
+        const { data, isUpdate, recordId, pkField: clientPkField } = req.body;
 
         const metadata = MetadataService.getFormMetadata(idform);
         if (!metadata) return res.status(404).json({ error: 'Módulo no existe' });
@@ -249,30 +249,33 @@ exports.saveGridData = async (req, res) => {
         const physicalTable = gridMeta.vquery; // Temporalmente usamos vquery
 
         // Generación dinámica segura del Query:
-        // Aseguramos que SÓLO se guarden los campos detectados en la configuración (metadatos)
-        // Esto evita errores si librerías como AG-Grid inyectan propiedades virtuales en el registro (ej _rowId)
-        const allowedFields = gridMeta.fields.map(f => f.campo);
-
+        // Solo filtramos propiedades internas de AG Grid, el resto se guarda tal cual
         const columns = Object.keys(data).filter(col =>
             data[col] !== undefined &&
             typeof data[col] !== 'object' &&
-            allowedFields.includes(col)
+            !col.startsWith('_') &&
+            !col.startsWith('__')
         );
 
+        // Sanitizar valores: strings vacías → null (para columnas numéricas de PostgreSQL)
+        columns.forEach(col => {
+            if (data[col] === '') data[col] = null;
+        });
+
         console.log("== DEBUG GUARDADO ==");
-        console.log("allowedFields:", allowedFields);
         console.log("data keys:", Object.keys(data));
-        console.log("data bools:", Object.keys(data).filter(k => typeof data[k] === 'boolean').map(k => k + '=' + data[k]));
         console.log("final columns:", columns);
 
         let sql = '';
         const params = [];
 
         if (isUpdate && recordId) {
-            // UPDATE table SET col1=$1, col2=$2 WHERE PK=$3
-            // Extraer la PK real desde la metadata
-            const metaPkField = gridMeta.fields.find(f => f.pk === true || f.campo === `id${physicalTable}`);
-            let pkField = metaPkField ? metaPkField.campo : null;
+            // Usar pkField del cliente si viene, sino detectar
+            let pkField = clientPkField || null;
+            if (!pkField) {
+                const metaPkField = gridMeta.fields.find(f => f.pk === true);
+                pkField = metaPkField ? metaPkField.campo : null;
+            }
             if (!pkField) {
                 pkField = columns.find(c => c.startsWith('id') || c.endsWith('id')) || columns[0];
             }

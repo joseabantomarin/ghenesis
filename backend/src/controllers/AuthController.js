@@ -37,13 +37,14 @@ class AuthController {
                 return res.status(401).json({ success: false, error: 'Credenciales inválidas' });
             }
 
-            // Generar Token
+            // Generar Token (incluye idrole y rolename para filtros de menú)
             const token = jwt.sign(
                 {
                     iduser: user.iduser,
                     username: user.username,
                     fullname: user.fullname,
                     email: user.email,
+                    idrole: user.idrole,
                     role: user.rolename
                 },
                 JWT_SECRET,
@@ -69,11 +70,41 @@ class AuthController {
      * Verificar sesión actual
      */
     async me(req, res) {
-        // El usuario ya viene inyectado por el middleware de auth
         res.json({
             success: true,
             user: req.user
         });
+    }
+
+    /**
+     * Obtener permisos del usuario actual (mapa por idform)
+     */
+    async getMyPermissions(req, res) {
+        try {
+            const idrole = req.user.idrole;
+            if (!idrole) {
+                return res.json({ success: true, data: {} });
+            }
+
+            const result = await db.query(
+                'SELECT idform, readonly, hidden FROM XPERMISSIONS WHERE idrole = $1',
+                [idrole]
+            );
+
+            // Convertir a mapa { idform: { readonly, hidden } }
+            const permMap = {};
+            for (const row of result.rows) {
+                permMap[row.idform] = {
+                    readonly: row.readonly,
+                    hidden: row.hidden
+                };
+            }
+
+            res.json({ success: true, data: permMap });
+        } catch (error) {
+            console.error('Permissions error:', error);
+            res.status(500).json({ success: false, error: error.message });
+        }
     }
 }
 

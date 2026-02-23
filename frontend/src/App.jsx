@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, CssBaseline, AppBar, Toolbar, Typography, Drawer, CircularProgress, IconButton, Tabs, Tab, useMediaQuery, Menu, MenuItem, Divider, Avatar, ListItemIcon as MuiListItemIcon } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import CloseIcon from '@mui/icons-material/Close';
@@ -10,6 +10,8 @@ import { useMetadata } from './context/MetadataContext';
 import { useAuth } from './context/AuthContext';
 import DynamicMenu from './components/DynamicMenu';
 import DynamicView from './components/DynamicView';
+import UserManager from './components/UserManager';
+import RoleManager from './components/RoleManager';
 import Login from './components/Login';
 import './theme.css'; // Importando Tema Global
 
@@ -46,6 +48,14 @@ function App() {
     const [tabs, setTabs] = useState([{ id: 'home', title: 'Home', type: 'home' }]);
     const [activeTab, setActiveTab] = useState('home');
 
+    // Resetear pestañas al cerrar sesión
+    useEffect(() => {
+        if (!token) {
+            setTabs([{ id: 'home', title: 'Home', type: 'home' }]);
+            setActiveTab('home');
+        }
+    }, [token]);
+
     // Menú de usuario (dropdown)
     const [userMenuAnchor, setUserMenuAnchor] = useState(null);
     const userMenuOpen = Boolean(userMenuAnchor);
@@ -67,13 +77,15 @@ function App() {
         }
     };
 
-    const openTab = (idform, title) => {
-        if (!tabs.find(t => t.id === idform)) {
-            setTabs([...tabs, { id: idform, title, type: 'view' }]);
+    const openTab = (idform, title, type) => {
+        const tabType = type || 'view';
+        const tabId = type ? type : idform; // Para tabs fijos (users/roles) usar el type como id
+        if (!tabs.find(t => t.id === tabId)) {
+            setTabs([...tabs, { id: tabId, title, type: tabType, idform }]);
         }
-        setActiveTab(idform);
+        setActiveTab(tabId);
         if (isMobile) {
-            setDrawerOpen(false); // Cierra automáticamente en móviles
+            setDrawerOpen(false);
         }
     };
 
@@ -87,9 +99,7 @@ function App() {
 
     const handleLogout = () => {
         handleUserMenuClose();
-        if (window.confirm('¿Desea cerrar la sesión?')) {
-            logout();
-        }
+        logout();
     };
 
     // --- Auth gates ---
@@ -334,8 +344,12 @@ function App() {
                                         style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '8px' }}
                                     />
                                 </Box>
+                            ) : tab.type === 'users' ? (
+                                <UserManager />
+                            ) : tab.type === 'roles' ? (
+                                <RoleManager />
                             ) : (
-                                <DynamicView idform={tab.id} />
+                                <DynamicView idform={tab.idform || tab.id} />
                             )}
                         </TabPanel>
                     ))}
