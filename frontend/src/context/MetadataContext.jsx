@@ -34,7 +34,7 @@ export const MetadataProvider = ({ children }) => {
                     setPermissions(permRes.data.data);
                 }
             } catch (error) {
-                console.error("Error fetching metadata", error);
+                // Silencioso en producción
             } finally {
                 setLoadingMenu(false);
             }

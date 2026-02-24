@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  postgres_db:
+    image: postgres:17
+    container_name: ghenesis_db
+    restart: always
+    environment:
+      POSTGRES_USER: joseabanto
+      POSTGRES_PASSWORD: mysecretpassword
+      POSTGRES_DB: ghenesis
+    ports:
+      - "5433:5432" # Puerto 5433 en tu Mac mapea al 5432 dentro del contenedor
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data # Persistencia de datos en carpeta local
+
+volumes:
+  postgres_data:

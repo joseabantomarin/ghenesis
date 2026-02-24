@@ -6,7 +6,8 @@ class MetadataService {
             forms: {},
             grids: {},
             fields: {},
-            controls: {}
+            controls: {},
+            sistema: {}
         };
         this.isLoaded = false;
     }
@@ -14,14 +15,13 @@ class MetadataService {
     // Cargar toda la configuración esencial en memoria para ser súper rápidos
     async initCache() {
         try {
-            console.log('⏳ Cargando Diccionario de Metadatos en caché...');
-
             // Limpiamos la caché primero para evitar duplicados en cada refresh (F5)
             this.cache = {
                 forms: {},
                 grids: {},
                 fields: {},
-                controls: {}
+                controls: {},
+                sistema: {}
             };
 
             const resForms = await db.query('SELECT * FROM XFORMS');
@@ -45,8 +45,12 @@ class MetadataService {
                 this.cache.controls[c.idform].push(c);
             });
 
+            const resSistema = await db.query('SELECT * FROM XSISTEMA LIMIT 1');
+            if (resSistema.rows.length > 0) {
+                this.cache.sistema = resSistema.rows[0];
+            }
+
             this.isLoaded = true;
-            console.log('✅ Metadatos cacheados en memoria correctamente');
         } catch (err) {
             console.error('❌ Error al cargar metadatos:', err);
             throw err;
@@ -86,6 +90,10 @@ class MetadataService {
     getAppMenu() {
         if (!this.isLoaded) throw new Error('Caché no iniciada');
         return Object.values(this.cache.forms).sort((a, b) => a.nroform - b.nroform);
+    }
+    // Obtener configuración global del sistema
+    getSistemaConfig() {
+        return this.cache.sistema || {};
     }
 }
 

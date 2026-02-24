@@ -29,6 +29,15 @@ exports.getFormDefinition = (req, res) => {
     }
 };
 
+exports.getSistemaConfig = (req, res) => {
+    try {
+        const config = MetadataService.getSistemaConfig();
+        res.json({ success: true, data: config });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
 // Función Auxiliar para envolver consultas (Query Wrapping)
 // Recibe un Query Base y le aplica Paginación, Búsqueda, Filtrado Maestro-Detalle y Ordenamiento
 const buildWrappedQuery = async (baseSql, baseParams, reqQuery, gridMeta) => {
@@ -155,8 +164,6 @@ exports.getGridData = async (req, res) => {
 
         // --- INTERCEPTOR SOPEN ---
         if (gridMeta.sopen) {
-            console.log(`⚡ Leyendo datos vía sopen para Grilla ${idgrid}...`);
-
             // Parsear el registro padre entero si la grilla hija lo recibe
             let decodedMasterRecord = null;
             if (req.query.masterRecordPayload) {
@@ -181,7 +188,6 @@ exports.getGridData = async (req, res) => {
 
             // Si el script retorna un objeto de Query Wrapping dinámico:
             if (sopenResult && sopenResult.wrapQuery) {
-                console.log(`⚡ Aplicando Query Wrapping al SQL de Sopen...`);
                 try {
                     const wrappedResult = await buildWrappedQuery(sopenResult.wrapQuery, sopenResult.wrapParams || [], req.query, gridMeta);
                     return res.json({ success: true, ...wrappedResult });
@@ -382,8 +388,6 @@ exports.executeScript = async (req, res) => {
             return res.json({ success: true, message: `No hay script definido para el evento ${event}` });
         }
 
-        console.log(`⚡ Ejecutando Script Dinámico [${event}] en Sandbox para Formulario ${idform}`);
-
         // Invocamos el Motor V8 seguro
         const result = await ScriptingService.runScript(scriptCode, contextParams);
 
@@ -395,6 +399,42 @@ exports.executeScript = async (req, res) => {
 
     } catch (error) {
         console.error(`❌ Error en Controller executeScript:`, error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+// ------------------------------------------------------------------------------------------------ //
+// Guardar configuración de interfaz (anchos y posiciones de columnas)
+// ------------------------------------------------------------------------------------------------ //
+exports.saveInterface = async (req, res) => {
+    try {
+        const { idgrid, columns } = req.body; // columns: [{ campo, ancho, posicion }]
+
+        if (!idgrid || !columns || !Array.isArray(columns)) {
+            return res.status(400).json({ success: false, error: 'Datos de interfaz incompletos' });
+        }
+
+        // Transacción para asegurar que todos se actualicen o ninguno
+        await db.query('BEGIN');
+
+        try {
+            for (const col of columns) {
+                await db.query(
+                    'UPDATE XFIELD SET ancho = $1, posicion = $2 WHERE idgrid = $3 AND campo = $4',
+                    [col.ancho, col.posicion, idgrid, col.campo]
+                );
+            }
+            await db.query('COMMIT');
+        } catch (err) {
+            await db.query('ROLLBACK');
+            throw err;
+        }
+
+        // Refrescar caché de metadatos para que el backend reconozca los nuevos anchos/posiciones
+        await MetadataService.refresh();
+
+        res.json({ success: true, message: 'Configuración de interfaz guardada correctamente' });
+    } catch (error) {
+        console.error('❌ Error al guardar interfaz:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 };

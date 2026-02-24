@@ -2,6 +2,8 @@ node_modules/
 .env
 .DS_Store
 backups/
+postgres_data/
+*.log
 .agents/
 backend/manual_backup.js
 backend/check_state.js

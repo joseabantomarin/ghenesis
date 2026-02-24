@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Box, TextField, Button, Typography, Grid as MuiGrid, MenuItem, Checkbox, FormControlLabel, Paper } from '@mui/material';
 import { Save as SaveIcon, Close as CancelIcon } from '@mui/icons-material';
+import * as Icons from '@mui/icons-material';
 import axios from 'axios';
 import DynamicGrid from './DynamicGrid';
 
@@ -39,7 +40,45 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                 console.error("Error evaluando SNewRecord", e);
             }
         }
+
+        // Foco inicial en el primer campo visible y no readonly
+        const firstField = editFields.find(f => !f.readonly && !f.locked);
+        if (firstField) {
+            setTimeout(() => {
+                const input = document.getElementById(`form-field-${firstField.campo}`);
+                if (input) input.focus();
+            }, 100);
+        }
     }, []);
+
+    // Manejar atajos de teclado del formulario
+    useEffect(() => {
+        const handleKeys = (e) => {
+            if (e.ctrlKey && e.key === 'Enter') {
+                e.preventDefault();
+                handleSave();
+            }
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                onClose();
+            }
+        };
+        window.addEventListener('keydown', handleKeys);
+        return () => window.removeEventListener('keydown', handleKeys);
+    }, [formData]);
+
+    const handleKeyDown = (e, index) => {
+        if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') {
+            e.preventDefault();
+            const nextField = editFields.slice(index + 1).find(f => !f.readonly && !f.locked);
+            if (nextField) {
+                const input = document.getElementById(`form-field-${nextField.campo}`);
+                if (input) input.focus();
+            } else {
+                handleSave();
+            }
+        }
+    };
 
     const handleChange = (campo, valor) => {
         setFormData(prev => ({ ...prev, [campo]: valor }));
@@ -61,9 +100,9 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                 const beforePost = new Function('formData', gridMeta.ssave);
                 const allow = beforePost(formData);
                 if (allow === false) return;
-            } catch (e) {
-                console.error("Error ssave", e);
-            }
+            } catch (error) {
+                // Silencioso o log mínimo en producción
+            } finally { }
         }
 
         try {
@@ -151,25 +190,80 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                             if (field.valcombo || field.sqlcombo) {
                                 let opciones = field.valcombo ? field.valcombo.split(',').map(v => v.trim()) : [];
                                 InputElement = (
-                                    <TextField select fullWidth size="small" label={field.titlefield || field.campo} value={value} onChange={(e) => handleChange(field.campo, e.target.value)} disabled={field.readonly || field.locked || readonlyMode}>
+                                    <TextField
+                                        select fullWidth size="small"
+                                        id={`form-field-${field.campo}`}
+                                        label={field.titlefield || field.campo}
+                                        value={value}
+                                        onChange={(e) => handleChange(field.campo, e.target.value)}
+                                        onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
+                                        disabled={field.readonly || field.locked || readonlyMode}
+                                    >
                                         {opciones.map(opt => <MenuItem key={opt} value={opt}>{opt}</MenuItem>)}
                                     </TextField>
                                 );
                             } else if (field.tipod === 'B') {
                                 InputElement = (
-                                    <FormControlLabel control={<Checkbox checked={Boolean(value)} onChange={(e) => handleChange(field.campo, e.target.checked)} disabled={field.readonly || field.locked || readonlyMode} />} label={field.titlefield || field.campo} />
+                                    <FormControlLabel
+                                        control={<Checkbox checked={Boolean(value)} onChange={(e) => handleChange(field.campo, e.target.checked)} disabled={field.readonly || field.locked || readonlyMode} />}
+                                        label={field.titlefield || field.campo}
+                                    />
                                 );
                             } else if (field.tipod === 'W') {
                                 InputElement = (
-                                    <TextField fullWidth multiline rows={field.altomemo || 3} label={field.titlefield || field.campo} value={value} onChange={(e) => handleChange(field.campo, e.target.value)} disabled={field.readonly || field.locked || readonlyMode} />
+                                    <TextField
+                                        fullWidth multiline rows={field.altomemo || 3}
+                                        id={`form-field-${field.campo}`}
+                                        label={field.titlefield || field.campo}
+                                        value={value}
+                                        onChange={(e) => handleChange(field.campo, e.target.value)}
+                                        onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
+                                        disabled={field.readonly || field.locked || readonlyMode}
+                                    />
                                 );
                             } else if (field.tipod === 'D') {
                                 InputElement = (
-                                    <TextField fullWidth size="small" type="date" label={field.titlefield || field.campo} value={value} onChange={(e) => handleChange(field.campo, e.target.value)} disabled={field.readonly || field.locked || readonlyMode} InputLabelProps={{ shrink: true }} />
+                                    <TextField
+                                        fullWidth size="small" type="date"
+                                        id={`form-field-${field.campo}`}
+                                        label={field.titlefield || field.campo}
+                                        value={value}
+                                        onChange={(e) => handleChange(field.campo, e.target.value)}
+                                        onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
+                                        disabled={field.readonly || field.locked || readonlyMode}
+                                        InputLabelProps={{ shrink: true }}
+                                    />
+                                );
+                            } else if (field.campo === 'xicons' || field.campo === 'previsualizacion' || field.tipod === 'X') {
+                                // Renderizar el icono si existe en Material Icons
+                                const iconName = value ? value.charAt(0).toUpperCase() + value.slice(1) : '';
+                                const IconComp = Icons[iconName] || Icons['HelpOutline'];
+                                InputElement = (
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                        <IconComp color="primary" sx={{ fontSize: 32 }} />
+                                        <TextField
+                                            fullWidth size="small"
+                                            id={`form-field-${field.campo}`}
+                                            label={field.titlefield || field.campo}
+                                            value={value}
+                                            onChange={(e) => handleChange(field.campo, e.target.value)}
+                                            onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
+                                            disabled={field.readonly || field.locked || readonlyMode}
+                                        />
+                                    </Box>
                                 );
                             } else {
                                 InputElement = (
-                                    <TextField fullWidth size="small" type={field.tipod === 'I' || field.tipod === 'F' ? 'number' : 'text'} label={field.titlefield || field.campo} value={value} onChange={(e) => handleChange(field.campo, e.target.value)} disabled={field.readonly || field.locked || readonlyMode} />
+                                    <TextField
+                                        fullWidth size="small"
+                                        id={`form-field-${field.campo}`}
+                                        type={field.tipod === 'I' || field.tipod === 'F' ? 'number' : 'text'}
+                                        label={field.titlefield || field.campo}
+                                        value={value}
+                                        onChange={(e) => handleChange(field.campo, e.target.value)}
+                                        onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
+                                        disabled={field.readonly || field.locked || readonlyMode}
+                                    />
                                 );
                             }
 
@@ -182,16 +276,14 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                         .filter(g => g.gparent === gridMeta.idgrid)
                         .sort((a, b) => (a.nroframe || 0) - (b.nroframe || 0))
                         .map(child => (
-                            <Box key={child.idgrid} sx={{ mt: 4, pt: 2, borderTop: '1px solid #eee' }}>
-                                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold', color: 'text.secondary' }}>
-                                    {child.titulo}
-                                </Typography>
+                            <Box key={child.idgrid} sx={{ mt: 1, pt: 1, mx: { xs: -1, sm: 0 } }}>
                                 <DynamicGrid
                                     gridMeta={child}
                                     idform={idform}
                                     masterRecord={formData}
                                     allGrids={allGrids}
                                     readonlyMode={readonlyMode}
+                                    autoFocusFirstRow={false}
                                 />
                             </Box>
                         ))}

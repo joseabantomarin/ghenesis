@@ -1,17 +1,24 @@
 /* Variables Globales de Tema (Theme) para Ghenesis Framework */
 :root {
     /* Color Principal: Se aplica al AppBar de la página */
-    --primary-color: #1c3895c4;
+    --primary-color: #234e66;
+    /* Un Azul-Verdoso (Teal oscuro) que une ambos colores */
     --primary-text-color: #ffffff;
 
     /* Configuración de Grillas (AG Grid) */
-    --grid-header-bg: #79A4F7;
+    --grid-header-bg: #3c7a7d;
+    /* Un Verde-Azulado medio, suaviza el paso desde el AppBar */
     --grid-header-color: #ffffff;
-    --grid-selected-row-bg: #e3edff;
+    --grid-selected-row-bg: rgba(60, 122, 125, 0.08);
+    /* Fondo muy sutil derivado del verde-azulado */
 
     /* Pestañas y Títulos */
-    --active-tab-color: #1240ea;
-    /* Color resaltado para título de grilla y la raya de la pestaña seleccionada */
+    --active-tab-color: #3c7a7d;
+    --input-label-color: #234e66;
+    --fondo-menu: #f1f6f7;
+    /* Fondo con un ligero tinte azulado para armonizar */
+    --letra-menu: #334e5a;
+    /* Gris azulado profundo */
 }
 
 /* Forzar el color del pequeñísimo badge de filtro activo (el circulito superior derecho) */
@@ -29,6 +36,30 @@
 /* Quitar los puntos suspensivos ("...") de los cabezales cuando el texto es largo */
 .ag-header-cell-text {
     text-overflow: clip !important;
+}
+
+/* Color de fondo para las cajitas de filtro dinamico (bajo los titulos) */
+.ag-floating-filter-input .ag-input-wrapper {
+    background-color: white !important;
+    /* Capa base blanca para que no se mezcle con el naranja */
+}
+
+.ag-floating-filter-input input {
+    background-color: var(--grid-selected-row-bg) !important;
+}
+
+
+/* Etiquetas de campos en formularios con el color de cabeceras de grilla */
+.MuiInputLabel-root,
+.MuiFormControlLabel-label {
+    color: var(--grid-header-bg) !important;
+    font-weight: bold;
+}
+
+/* Color de fondo del menú lateral */
+.MuiDrawer-paper {
+    background-color: var(--fondo-menu) !important;
+    color: var(--letra-menu) !important;
 }
 
 /* Centrar títulos de cabecera y grupos */
