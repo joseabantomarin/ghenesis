@@ -1,56 +1,63 @@
-# Guía Rápida de Instalación - Ghenesis Framework
+# Ghenesis Framework - Metadata-Driven Application Engine
 
-## 1. Instalar PostgreSQL en Mac (Sin usar Terminal/Brew)
-
-La forma más sencilla y visual de instalar PostgreSQL en macOS es usando **Postgres.app**:
-
-1. Ve a **[PostgresApp.com](https://postgresapp.com/)** y haz clic en "Download" (asegúrate de descargar la versión universal o la que corresponda a tu Mac con procesador Intel o Apple Silicon M1/M2/M3).
-2. Abre el archivo `.dmg` descargado y arrastra el elefante azul ("Postgres") a tu carpeta de **Aplicaciones**.
-3. Ve a tu carpeta de Aplicaciones, haz doble clic en **Postgres** para abrirlo.
-4. Te pedirá permisos la primera vez que lo abres, acéptalos. Verás una ventana con un botón que dice **"Start"** (o "Initialize" si es la primera vez). Haz clic ahí.
-5. ¡Listo! Ya tienes un servidor PostgreSQL corriendo en tu Mac en el puerto `5432`. El usuario por defecto suele ser tu nombre de usuario de Mac o `postgres`, y sin contraseña por defecto (puedes configurarla después).
-
-**Para administrar la base de datos visualmente (Equivalente a SQL Server Management Studio o pgAdmin):**
-* Descarga **[DBeaver Community](https://dbeaver.io/download/)** o **[Postico](https://eggerapps.at/postico2/)** (súper recomendado para Mac).
-* Conéctate usando `localhost`, puerto `5432`.
-* Crea una base de datos llamada `ghenesis_db`.
-* Abre el archivo `database/schema.sql` en tu administrador y ejecútalo entero para crear las tablas `XFORMS`, `XGRID`, etc.
+**Ghenesis** es un ecosistema de desarrollo de aplicaciones empresariales basado al 100% en **Metadatos**. No es solo un generador de código; es un motor que interpreta la base de datos en tiempo real para construir interfaces, validar reglas de negocio y ejecutar lógica personalizada sin necesidad de recompilar el núcleo del sistema.
 
 ---
 
-## 2. Instalar Node.js para el servidor V8/Javascript
+## 🚀 ¿Qué hace único a Ghenesis?
 
-Dado que vi que no tienes `npm` en la terminal, Node.js no está instalado:
-1. Ve a **[Nodejs.org](https://nodejs.org/)** y descarga la versión **LTS** para macOS.
-2. Instálalo como cualquier otro programa (siguiente, siguiente).
-3. Esto instalará automáticamente el comando `npm`.
+### 1. Arquitectura Basada en Metadatos (Hot Reload)
+Toda la interfaz del usuario se define en tablas maestras (`XFORMS`, `XGRID`, `XFIELD`). Cambiar un título, mover un campo de posición o cambiar un icono es tan simple como editar una fila en la base de datos. Los cambios se reflejan al instante (Hot Reload) en el navegador del usuario.
+
+### 2. Motor de Scripting Dinámico (Sandbox 2.0)
+Incluye un motor de ejecución de JavaScript aislado. Puedes inyectar lógica compleja directamente desde la base de datos para responder a eventos del usuario, realizar cálculos masivos sobre los datos del grid o interactuar con APIs externas, todo dentro de un entorno seguro.
+
+### 3. Control de UI Inteligente (`ui.setStyle`)
+Un sistema único de manipulación de interfaz que permite a tus scripts cambiar radicalmente la apariencia del sistema en tiempo real. ¿Necesitas que el botón de borrar desaparezca y el de guardar se vuelva rojo bajo cierta condición? Con `ui.setStyle`, el código tiene control total sobre el diseño Material UI del framework.
+
+### 4. Validadores E2E y Reglas de Negocio
+Ghenesis implementa una capa de validación profunda que sincroniza el frontend y el backend automáticamente. Soporta validación de campos obligatorios, unicidad física (`vunique`), y transformaciones automáticas como el Modo Mayúsculas Global.
+
+### 5. UI Premium y Experiencia Pro
+Diseñado bajo los estándares de Material UI, con una gestión de pestañas dinámica inspirada en IDEs profesionales, diseño ultra-compacto para maximizar el área de trabajo y un sistema de señalización de errores animado (Maroon Edition) que guía al usuario de forma intuitiva.
 
 ---
 
-## 3. Levantar los Proyectos
+## 🛠 Guía Rápida de Instalación
 
-Abre dos ventanas diferentes de la **Terminal** (búscala en Spotlight):
+### 1. Instalar PostgreSQL en Mac
+La forma más sencilla es usando **Postgres.app**:
+1. Descarga en **[PostgresApp.com](https://postgresapp.com/)**.
+2. Arrastra a **Aplicaciones**.
+3. Abre y haz clic en **"Start"**. El puerto por defecto es `5432` (o configura el `5433` si usas Docker).
 
-### Para el Backend (El Motor / API)
+**Administración Visual:**
+* Usa **DBeaver Community** o **Postico**.
+* Ejecuta `database/schema.sql` para preparar las tablas del motor.
+
+### 2. Instalar Node.js
+1. Descarga la versión **LTS** en **[Nodejs.org](https://nodejs.org/)**.
+2. Instálalo para habilitar el comando `npm`.
+
+### 3. Levantar los Proyectos
+
+#### Backend (API / Motor)
 ```bash
-cd /Users/joseabanto/Applications/ghenesis/backend
-
-# 1. Instalar las librerías base y el creador de PDFs (pdfmake)
+cd backend
 npm install
-npm install pdfmake
-
-# 2. Correr el servidor
 npm run dev
 ```
 
-### Para el Frontend (La Interfaz Web)
+#### Frontend (Interfaz)
 ```bash
-cd /Users/joseabanto/Applications/ghenesis/frontend
-
-# 1. Instalar las librerías de UI (React, Material UI)
+cd frontend
 npm install
-
-# 2. Correr el servidor visual
 npm run dev
 ```
-Te dará una URL (generalmente `http://localhost:5173`) a la que puedes entrar desde Safari o Chrome.
+Accede vía `http://localhost:5173`.
+
+---
+
+## 📖 Documentación Relacionada
+*   `manual_script.md`: Guía completa para programar en el Scripting Engine.
+*   `tareas_completadas.md`: Registro histórico de hitos y actualizaciones.
