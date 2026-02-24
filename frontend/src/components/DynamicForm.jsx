@@ -4,9 +4,12 @@ import { Save as SaveIcon, Close as CancelIcon } from '@mui/icons-material';
 import * as Icons from '@mui/icons-material';
 import axios from 'axios';
 import DynamicGrid from './DynamicGrid';
+import AlertDialog from './AlertDialog';
 
-const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode }) => {
+const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode, uiStyles = {} }) => {
     const [formData, setFormData] = useState(record || {});
+    const [alert, setAlert] = useState({ open: false, title: '', message: '', severity: 'error' });
+    const [showValidationEffect, setShowValidationEffect] = useState(false);
 
     // Extraer campos configurados para edición (eoculto = false)
     const editFields = (() => {
@@ -81,7 +84,11 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
     };
 
     const handleChange = (campo, valor) => {
-        setFormData(prev => ({ ...prev, [campo]: valor }));
+        let finalValue = valor;
+        if (gridMeta.mayusculas && typeof valor === 'string') {
+            finalValue = valor.toUpperCase();
+        }
+        setFormData(prev => ({ ...prev, [campo]: finalValue }));
 
         const fieldMeta = editFields.find(f => f.campo === campo);
         if (fieldMeta && fieldMeta.svalida) {
@@ -95,6 +102,20 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
     };
 
     const handleSave = async () => {
+        // Validar Campos Obligatorios
+        const mandatoryMissing = editFields.filter(f => f.obligatorio && (!formData[f.campo] || formData[f.campo].toString().trim() === ''));
+        if (mandatoryMissing.length > 0) {
+            const fieldNames = mandatoryMissing.map(f => f.titlefield || f.campo).join(', ');
+
+            setAlert({
+                open: true,
+                title: 'Campos Requeridos',
+                message: `Por favor, completa los siguientes campos obligatorios: ${fieldNames}`,
+                severity: 'warning'
+            });
+            return;
+        }
+
         if (gridMeta.ssave) {
             try {
                 const beforePost = new Function('formData', gridMeta.ssave);
@@ -144,15 +165,25 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                 }
                 onClose();
             } else {
-                alert('No se pudo guardar: ' + res.data.error);
+                setAlert({
+                    open: true,
+                    title: 'Error de Validación',
+                    message: res.data.error || 'No se pudo guardar el registro.',
+                    severity: 'error'
+                });
             }
         } catch (error) {
-            alert('Error conectando al servidor: ' + error.message);
+            setAlert({
+                open: true,
+                title: 'Error del Sistema',
+                message: error.response?.data?.error || error.message,
+                severity: 'error'
+            });
         }
     };
 
     return (
-        <Paper elevation={0} sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <Paper elevation={0} className={gridMeta.mayusculas ? 'force-uppercase' : ''} sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <Box sx={{ flexGrow: 1, overflowY: 'auto', pb: 3 }}>
                 <Box sx={{
                     px: { xs: 1, sm: 2 },
@@ -166,16 +197,41 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                     borderColor: 'divider',
                     mb: 3
                 }}>
-                    <Typography variant="h6" sx={{ fontWeight: 'bold', color: 'var(--active-tab-color)', fontSize: '1.1rem' }}>
-                        {gridMeta.titulo}
+                    <Typography variant="h6" sx={{
+                        fontWeight: 'bold',
+                        color: uiStyles.formTitle?.color || 'var(--active-tab-color)',
+                        fontSize: '1.1rem',
+                        display: uiStyles.formTitle?.visible === false ? 'none' : 'block'
+                    }}>
+                        {uiStyles.formTitle?.label || gridMeta.titulo}
                     </Typography>
                     <Box sx={{ display: 'flex', gap: 1 }}>
-                        <Button onClick={onClose} variant="outlined" color="inherit" startIcon={<CancelIcon />} sx={{ textTransform: 'none' }}>
-                            {readonlyMode ? 'Cerrar' : 'Cancelar'}
+                        <Button
+                            onClick={onClose} variant="outlined" color="inherit"
+                            startIcon={<CancelIcon />}
+                            disabled={uiStyles.cancel?.disabled || uiStyles.close?.disabled}
+                            sx={{
+                                textTransform: 'none',
+                                display: (readonlyMode ? uiStyles.close?.visible : uiStyles.cancel?.visible) === false ? 'none' : 'inline-flex',
+                                backgroundColor: readonlyMode ? uiStyles.close?.backgroundColor : uiStyles.cancel?.backgroundColor,
+                                color: readonlyMode ? uiStyles.close?.color : uiStyles.cancel?.color
+                            }}
+                        >
+                            {readonlyMode ? (uiStyles.close?.label || 'Cerrar') : (uiStyles.cancel?.label || 'Cancelar')}
                         </Button>
                         {!readonlyMode && (
-                            <Button onClick={handleSave} variant="contained" color="primary" startIcon={<SaveIcon />} sx={{ textTransform: 'none' }}>
-                                Guardar
+                            <Button
+                                onClick={handleSave} variant="contained" color="primary"
+                                startIcon={<SaveIcon />}
+                                disabled={uiStyles.save?.disabled}
+                                sx={{
+                                    textTransform: 'none',
+                                    display: uiStyles.save?.visible === false ? 'none' : 'inline-flex',
+                                    backgroundColor: uiStyles.save?.backgroundColor,
+                                    color: uiStyles.save?.color
+                                }}
+                            >
+                                {uiStyles.save?.label || 'Guardar'}
                             </Button>
                         )}
                     </Box>
@@ -184,7 +240,17 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                 <Box sx={{ px: { xs: 1, sm: 3 } }}>
                     <MuiGrid container spacing={2}>
                         {editFields.map(field => {
-                            const value = formData[field.campo] ?? field.valxdefecto ?? '';
+                            let value = formData[field.campo] ?? field.valxdefecto ?? '';
+
+                            // Si el valor es un objeto (ej: jsonb de la base de datos), lo convertimos a string para el input
+                            if (value !== null && typeof value === 'object') {
+                                try {
+                                    value = JSON.stringify(value, null, 2);
+                                } catch (e) {
+                                    value = '[Error: Object]';
+                                }
+                            }
+
                             let InputElement = null;
 
                             if (field.valcombo || field.sqlcombo) {
@@ -198,6 +264,23 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                                         onChange={(e) => handleChange(field.campo, e.target.value)}
                                         onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
                                         disabled={field.readonly || field.locked || readonlyMode}
+                                        InputProps={{ style: { textTransform: gridMeta.mayusculas ? 'uppercase' : 'none' } }}
+                                        InputLabelProps={{ sx: field.obligatorio ? { color: 'maroon', '&.Mui-focused': { color: 'maroon' } } : {} }}
+                                        sx={{
+                                            '& .MuiOutlinedInput-root': {
+                                                '& fieldset': {
+                                                    borderColor: (field.obligatorio && (!value || value.toString().trim() === '')) ? 'maroon' : undefined,
+                                                    borderWidth: (field.obligatorio && (!value || value.toString().trim() === '')) ? '1.5px' : undefined,
+                                                },
+                                                animation: (showValidationEffect && field.obligatorio && (!value || value.toString().trim() === ''))
+                                                    ? 'validation-pulse 1s ease-in-out infinite' : 'none',
+                                                '@keyframes validation-pulse': {
+                                                    '0%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)', backgroundColor: 'transparent' },
+                                                    '50%': { boxShadow: '0 0 20px maroon', filter: 'blur(1.5px)', backgroundColor: 'rgba(128, 0, 0, 0.08)' },
+                                                    '100%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)', backgroundColor: 'transparent' }
+                                                }
+                                            }
+                                        }}
                                     >
                                         {opciones.map(opt => <MenuItem key={opt} value={opt}>{opt}</MenuItem>)}
                                     </TextField>
@@ -207,6 +290,21 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                                     <FormControlLabel
                                         control={<Checkbox checked={Boolean(value)} onChange={(e) => handleChange(field.campo, e.target.checked)} disabled={field.readonly || field.locked || readonlyMode} />}
                                         label={field.titlefield || field.campo}
+                                        sx={field.obligatorio ? {
+                                            '& .MuiFormControlLabel-label': {
+                                                color: 'maroon',
+                                                fontWeight: (field.obligatorio && (!value)) ? 600 : undefined
+                                            },
+                                            px: 1,
+                                            borderRadius: '8px',
+                                            animation: (showValidationEffect && field.obligatorio && (!value))
+                                                ? 'validation-pulse-bg 1s ease-in-out infinite' : 'none',
+                                            '@keyframes validation-pulse-bg': {
+                                                '0%': { backgroundColor: 'transparent', filter: 'blur(0px)' },
+                                                '50%': { backgroundColor: 'rgba(128, 0, 0, 0.12)', filter: 'blur(1px)' },
+                                                '100%': { backgroundColor: 'transparent', filter: 'blur(0px)' }
+                                            }
+                                        } : {}}
                                     />
                                 );
                             } else if (field.tipod === 'W') {
@@ -219,6 +317,29 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                                         onChange={(e) => handleChange(field.campo, e.target.value)}
                                         onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
                                         disabled={field.readonly || field.locked || readonlyMode}
+                                        InputProps={{ style: { textTransform: gridMeta.mayusculas ? 'uppercase' : 'none' } }}
+                                        InputLabelProps={{ sx: field.obligatorio ? { color: 'maroon', '&.Mui-focused': { color: 'maroon' } } : {} }}
+                                        sx={{
+                                            '& .MuiInputBase-root': {
+                                                alignItems: 'flex-start',
+                                                borderColor: (field.obligatorio && (!value || value.toString().trim() === '')) ? 'maroon' : undefined,
+                                                '& fieldset': {
+                                                    borderColor: (field.obligatorio && (!value || value.toString().trim() === '')) ? 'maroon' : undefined,
+                                                    borderWidth: (field.obligatorio && (!value || value.toString().trim() === '')) ? '1.5px' : undefined,
+                                                },
+                                                animation: (showValidationEffect && field.obligatorio && (!value || value.toString().trim() === ''))
+                                                    ? 'validation-pulse 1s ease-in-out infinite' : 'none',
+                                                '@keyframes validation-pulse': {
+                                                    '0%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)', backgroundColor: 'transparent' },
+                                                    '50%': { boxShadow: '0 0 20px maroon', filter: 'blur(1.5px)', backgroundColor: 'rgba(128, 0, 0, 0.08)' },
+                                                    '100%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)', backgroundColor: 'transparent' }
+                                                },
+                                                '& textarea': {
+                                                    resize: 'vertical',
+                                                    overflow: 'auto !important'
+                                                }
+                                            }
+                                        }}
                                     />
                                 );
                             } else if (field.tipod === 'D') {
@@ -231,7 +352,22 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                                         onChange={(e) => handleChange(field.campo, e.target.value)}
                                         onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
                                         disabled={field.readonly || field.locked || readonlyMode}
-                                        InputLabelProps={{ shrink: true }}
+                                        InputLabelProps={{ shrink: true, sx: field.obligatorio ? { color: 'maroon', '&.Mui-focused': { color: 'maroon' } } : {} }}
+                                        sx={{
+                                            '& .MuiOutlinedInput-root': {
+                                                '& fieldset': {
+                                                    borderColor: (field.obligatorio && (!value || value.toString().trim() === '')) ? 'maroon' : undefined,
+                                                    borderWidth: (field.obligatorio && (!value || value.toString().trim() === '')) ? '1.5px' : undefined,
+                                                },
+                                                animation: (showValidationEffect && field.obligatorio && (!value || value.toString().trim() === ''))
+                                                    ? 'validation-pulse 1s ease-in-out infinite' : 'none',
+                                                '@keyframes validation-pulse': {
+                                                    '0%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)', backgroundColor: 'transparent' },
+                                                    '50%': { boxShadow: '0 0 20px maroon', filter: 'blur(1.5px)', backgroundColor: 'rgba(128, 0, 0, 0.08)' },
+                                                    '100%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)', backgroundColor: 'transparent' }
+                                                }
+                                            }
+                                        }}
                                     />
                                 );
                             } else if (field.campo === 'xicons' || field.campo === 'previsualizacion' || field.tipod === 'X') {
@@ -249,6 +385,23 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                                             onChange={(e) => handleChange(field.campo, e.target.value)}
                                             onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
                                             disabled={field.readonly || field.locked || readonlyMode}
+                                            InputProps={{ style: { textTransform: gridMeta.mayusculas ? 'uppercase' : 'none' } }}
+                                            InputLabelProps={{ sx: field.obligatorio ? { color: 'maroon', '&.Mui-focused': { color: 'maroon' } } : {} }}
+                                            sx={{
+                                                '& .MuiOutlinedInput-root': {
+                                                    '& fieldset': {
+                                                        borderColor: (field.obligatorio && (!value || value.toString().trim() === '')) ? 'maroon' : undefined,
+                                                        borderWidth: (field.obligatorio && (!value || value.toString().trim() === '')) ? '1.5px' : undefined,
+                                                    },
+                                                    animation: (showValidationEffect && field.obligatorio && (!value || value.toString().trim() === ''))
+                                                        ? 'validation-pulse 1s ease-in-out infinite' : 'none',
+                                                    '@keyframes validation-pulse': {
+                                                        '0%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)' },
+                                                        '50%': { boxShadow: '0 0 15px maroon', filter: 'blur(0.5px)' },
+                                                        '100%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)' }
+                                                    }
+                                                }
+                                            }}
                                         />
                                     </Box>
                                 );
@@ -263,6 +416,23 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                                         onChange={(e) => handleChange(field.campo, e.target.value)}
                                         onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
                                         disabled={field.readonly || field.locked || readonlyMode}
+                                        InputProps={{ style: { textTransform: gridMeta.mayusculas ? 'uppercase' : 'none' } }}
+                                        InputLabelProps={{ sx: field.obligatorio ? { color: 'maroon', '&.Mui-focused': { color: 'maroon' } } : {} }}
+                                        sx={{
+                                            '& .MuiOutlinedInput-root': {
+                                                '& fieldset': {
+                                                    borderColor: (field.obligatorio && (!value || value.toString().trim() === '')) ? 'maroon' : undefined,
+                                                    borderWidth: (field.obligatorio && (!value || value.toString().trim() === '')) ? '1.5px' : undefined,
+                                                },
+                                                animation: (showValidationEffect && field.obligatorio && (!value || value.toString().trim() === ''))
+                                                    ? 'validation-pulse 1s ease-in-out infinite' : 'none',
+                                                '@keyframes validation-pulse': {
+                                                    '0%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)', backgroundColor: 'transparent' },
+                                                    '50%': { boxShadow: '0 0 20px maroon', filter: 'blur(1.5px)', backgroundColor: 'rgba(128, 0, 0, 0.08)' },
+                                                    '100%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)', backgroundColor: 'transparent' }
+                                                }
+                                            }
+                                        }}
                                     />
                                 );
                             }
@@ -289,6 +459,21 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                         ))}
                 </Box>
             </Box>
+
+            <AlertDialog
+                open={alert.open}
+                title={alert.title}
+                message={alert.message}
+                severity={alert.severity}
+                onClose={() => {
+                    setAlert({ ...alert, open: false });
+                    if (alert.severity === 'warning') {
+                        // Activar efecto de animación justo después de cerrar el aviso
+                        setShowValidationEffect(true);
+                        setTimeout(() => setShowValidationEffect(false), 2200);
+                    }
+                }}
+            />
         </Paper>
     );
 };

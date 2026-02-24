@@ -45,10 +45,7 @@ export const MetadataProvider = ({ children }) => {
 
     // Función para obtener la definición de un módulo específico
     const getFormDefinition = async (idform) => {
-        if (formsCache[idform]) {
-            return formsCache[idform];
-        }
-
+        // Eliminado chequeo de caché local para que siempre se evalúen los metadatos fresh al ingresar
         try {
             const res = await axios.get(`/api/dynamic/meta/${idform}`);
             if (res.data.success) {

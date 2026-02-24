@@ -15,6 +15,7 @@ const DynamicView = ({ idform }) => {
 
     // Master-Detail States
     const [selectedMasterRecord, setSelectedMasterRecord] = useState(null);
+    const [isMasterEditing, setIsMasterEditing] = useState(false);
     const [splitHeight, setSplitHeight] = useState(70); // % para el maestro en desktop
     const [isDragging, setIsDragging] = useState(false);
 
@@ -124,7 +125,7 @@ const DynamicView = ({ idform }) => {
                     }}>
                         {/* Grilla Maestra */}
                         <Box sx={{
-                            height: childGrid
+                            height: (childGrid && !isMasterEditing)
                                 ? (isMobile ? '90%' : `${splitHeight}%`)
                                 : '100%',
                             width: '100%',
@@ -138,11 +139,12 @@ const DynamicView = ({ idform }) => {
                                 sactivateData={sactivateData}
                                 readonlyMode={isReadonly}
                                 onRowSelect={handleRowSelect}
+                                onEditingStateChange={(editing) => setIsMasterEditing(editing)}
                             />
                         </Box>
 
-                        {/* Splitter (Solo en escritorio y si hay hijo) */}
-                        {!isMobile && childGrid && (
+                        {/* Splitter (Solo en escritorio y si hay hijo y no se está editando) */}
+                        {!isMobile && childGrid && !isMasterEditing && (
                             <Box
                                 onMouseDown={handleMouseDown}
                                 sx={{
@@ -157,8 +159,8 @@ const DynamicView = ({ idform }) => {
                             />
                         )}
 
-                        {/* Grilla Detalle */}
-                        {childGrid && (
+                        {/* Grilla Detalle (Se oculta si el maestro está en edición para ganar espacio) */}
+                        {childGrid && !isMasterEditing && (
                             <Box sx={{
                                 height: isMobile ? 'auto' : `${100 - splitHeight}%`,
                                 width: '100%',

@@ -6,6 +6,9 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import InfoIcon from '@mui/icons-material/Info';
 import EmailIcon from '@mui/icons-material/Email';
 import PersonIcon from '@mui/icons-material/Person';
+import HomeIcon from '@mui/icons-material/Home';
+import ArticleIcon from '@mui/icons-material/Article';
+import * as Icons from '@mui/icons-material';
 import { useMetadata } from './context/MetadataContext';
 import { useAuth } from './context/AuthContext';
 import DynamicMenu from './components/DynamicMenu';
@@ -26,16 +29,20 @@ function TabPanel(props) {
             id={`simple-tabpanel-${index}`}
             aria-labelledby={`simple-tab-${index}`}
             {...other}
-            style={{ height: '100%', display: value === index ? 'flex' : 'none', flexDirection: 'column', overflow: 'hidden' }}
+            style={{ flex: 1, display: value === index ? 'flex' : 'none', flexDirection: 'column', overflow: 'hidden', height: '100%' }}
         >
-            {value === index && (
-                <Box sx={{ p: 0, height: '100%', pt: 1, pb: 1 }}>
-                    {children}
-                </Box>
-            )}
+            {value === index && children}
         </div>
     );
 }
+
+// Helper para obtener icono por nombre en pestañas
+const getIcon = (iconName, DefaultIcon = ArticleIcon) => {
+    if (!iconName) return <DefaultIcon fontSize="small" sx={{ mr: 0.8, fontSize: 18 }} />;
+    const normalized = iconName.charAt(0).toUpperCase() + iconName.slice(1);
+    const IconComponent = Icons[normalized] || Icons[iconName];
+    return IconComponent ? <IconComponent fontSize="small" sx={{ mr: 0.8, fontSize: 18 }} /> : <DefaultIcon fontSize="small" sx={{ mr: 0.8, fontSize: 18 }} />;
+};
 
 function App() {
     const { loading: authLoading, token, user, logout } = useAuth();
@@ -45,13 +52,13 @@ function App() {
     const [drawerOpen, setDrawerOpen] = useState(!isMobile);
 
     // Sistema de Pestañas
-    const [tabs, setTabs] = useState([{ id: 'home', title: 'Home', type: 'home' }]);
+    const [tabs, setTabs] = useState([{ id: 'home', title: 'Home', type: 'home', icon: 'Home' }]);
     const [activeTab, setActiveTab] = useState('home');
 
     // Resetear pestañas al cerrar sesión
     useEffect(() => {
         if (!token) {
-            setTabs([{ id: 'home', title: 'Home', type: 'home' }]);
+            setTabs([{ id: 'home', title: 'Home', type: 'home', icon: 'Home' }]);
             setActiveTab('home');
         }
     }, [token]);
@@ -77,11 +84,13 @@ function App() {
         }
     };
 
-    const openTab = (idform, title, type) => {
+    const openTab = (idform, title, type, icon) => {
         const tabType = type || 'view';
-        const tabId = type ? type : idform; // Para tabs fijos (users/roles) usar el type como id
+        // El tabId debe ser el tipo si es especial (users/roles), pero si es 'view' debe ser el idform
+        const tabId = (type && type !== 'view') ? type : idform;
+
         if (!tabs.find(t => t.id === tabId)) {
-            setTabs([...tabs, { id: tabId, title, type: tabType, idform }]);
+            setTabs([...tabs, { id: tabId, title, type: tabType, idform, icon }]);
         }
         setActiveTab(tabId);
         if (isMobile) {
@@ -295,15 +304,16 @@ function App() {
                 <Toolbar /> {/* Espaciador del AppBar superior */}
 
                 {/* Cabecera de Pestañas */}
-                <Box sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: '#f5f5f5' }}>
+                <Box sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: '#e0e4e7', pt: 0.5 }}>
                     <Tabs
                         value={activeTab}
                         onChange={handleTabChange}
                         variant="scrollable"
                         scrollButtons="auto"
                         sx={{
+                            minHeight: 38,
                             '& .MuiTabs-indicator': {
-                                backgroundColor: 'var(--active-tab-color)',
+                                display: 'none',
                             },
                         }}
                     >
@@ -312,17 +322,42 @@ function App() {
                                 key={tab.id}
                                 value={tab.id}
                                 sx={{
+                                    minHeight: 32,
+                                    height: 32,
+                                    py: 0,
+                                    px: 1.2,
+                                    fontSize: '0.78rem',
+                                    letterSpacing: '-0.01em',
+                                    color: 'text.secondary',
+                                    transition: 'all 0.15s ease',
+                                    borderRadius: '6px 6px 0 0',
+                                    mr: 0.2,
+                                    border: '1px solid transparent',
+                                    borderBottom: 'none',
                                     '&.Mui-selected': {
+                                        minHeight: 38,
+                                        height: 38,
                                         color: 'var(--active-tab-color)',
                                         fontWeight: 'bold',
+                                        backgroundColor: '#ffffff',
+                                        borderColor: 'divider',
+                                        borderTop: '2.5px solid var(--active-tab-color)',
+                                        boxShadow: '0 -1px 4px rgba(0,0,0,0.06)',
+                                        zIndex: 1,
                                     },
+                                    '&:hover': {
+                                        backgroundColor: 'rgba(255,255,255,0.4)',
+                                    }
                                 }}
                                 label={
-                                    <Box sx={{ display: 'flex', alignItems: 'center', textTransform: 'none' }}>
-                                        {tab.title}
+                                    <Box sx={{ display: 'flex', alignItems: 'center', textTransform: 'none', gap: 0.5 }}>
+                                        {getIcon(tab.icon, { fontSize: '0.95rem' })}
+                                        <Typography sx={{ fontSize: 'inherit', fontWeight: 'inherit', letterSpacing: 'inherit' }}>
+                                            {tab.title}
+                                        </Typography>
                                         {tab.id !== 'home' && (
-                                            <IconButton size="small" component="span" onClick={(e) => closeTab(e, tab.id)} sx={{ ml: 1, p: 0.2 }}>
-                                                <CloseIcon fontSize="small" />
+                                            <IconButton size="small" component="span" onClick={(e) => closeTab(e, tab.id)} sx={{ ml: 0.5, p: 0.1, '&:hover': { color: 'error.main' } }}>
+                                                <CloseIcon sx={{ fontSize: '0.9rem' }} />
                                             </IconButton>
                                         )}
                                     </Box>

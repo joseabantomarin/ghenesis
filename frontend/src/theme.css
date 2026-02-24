@@ -68,3 +68,16 @@
     justify-content: center !important;
     text-align: center;
 }
+
+/* Forzar Mayúsculas en el Grid */
+.force-uppercase .ag-cell {
+    text-transform: uppercase;
+}
+
+.force-uppercase .ag-cell-edit-input {
+    text-transform: uppercase !important;
+}
+
+.force-uppercase input {
+    text-transform: uppercase;
+}

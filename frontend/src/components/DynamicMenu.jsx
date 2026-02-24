@@ -12,8 +12,18 @@ import {
     VpnKey as PasswordIcon, Logout as LogoutIcon,
     Search as ConsultasIcon
 } from '@mui/icons-material';
+import * as Icons from '@mui/icons-material';
 import { useMetadata } from '../context/MetadataContext';
 import { useAuth } from '../context/AuthContext';
+
+// Helper para obtener icono por nombre (corregido por si vienen en minúsculas)
+const getIcon = (iconName, DefaultIcon = Article) => {
+    if (!iconName) return <DefaultIcon fontSize="small" />;
+    // Normalizar a Capitalizado (ej: user -> User)
+    const normalized = iconName.charAt(0).toUpperCase() + iconName.slice(1);
+    const IconComponent = Icons[normalized] || Icons[iconName];
+    return IconComponent ? <IconComponent fontSize="small" /> : <DefaultIcon fontSize="small" />;
+};
 
 const DynamicMenu = ({ onItemClick }) => {
     const { menu, permissions } = useMetadata();
@@ -31,9 +41,9 @@ const DynamicMenu = ({ onItemClick }) => {
         setOpenItems(prev => ({ ...prev, [id]: !prev[id] }));
     };
 
-    const itemClick = (id, title, type) => {
+    const itemClick = (id, title, type, icon) => {
         if (onItemClick) {
-            onItemClick(id, title, type);
+            onItemClick(id, title, type, icon);
         }
     };
 
@@ -67,7 +77,7 @@ const DynamicMenu = ({ onItemClick }) => {
                             sx={{ py: 0.3, pl: 4 + depth * 2 }}
                         >
                             <ListItemIcon sx={{ minWidth: 32 }}>
-                                <Article fontSize="small" />
+                                {getIcon(item.iconname)}
                             </ListItemIcon>
                             <ListItemText
                                 primary={item.descripcion || item.cform}
@@ -88,11 +98,11 @@ const DynamicMenu = ({ onItemClick }) => {
             return (
                 <ListItemButton
                     key={item.idform}
-                    onClick={() => itemClick(item.idform, item.descripcion || item.cform)}
+                    onClick={() => itemClick(item.idform, item.descripcion || item.cform, 'view', item.iconname)}
                     sx={{ py: 0.3, pl: 4 + depth * 2 }}
                 >
                     <ListItemIcon sx={{ minWidth: 32 }}>
-                        <Article fontSize="small" />
+                        {getIcon(item.iconname)}
                     </ListItemIcon>
                     <ListItemText
                         primary={item.descripcion || item.cform}
@@ -155,11 +165,11 @@ const DynamicMenu = ({ onItemClick }) => {
             {/* 4. Configuración — Solo visible para DEVELOPER y ADMINISTRADOR */}
             {isAdmin && (
                 <MenuCategory id="configuracion" label="Configuración" icon={ConfiguracionIcon}>
-                    <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => itemClick('users', 'Usuarios', 'users')}>
+                    <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => itemClick('users', 'Usuarios', 'users', 'People')}>
                         <ListItemIcon sx={{ minWidth: 32 }}><UsersIcon fontSize="small" /></ListItemIcon>
                         <ListItemText primary="Usuarios" primaryTypographyProps={{ fontSize: '0.875rem' }} />
                     </ListItemButton>
-                    <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => itemClick('roles', 'Roles', 'roles')}>
+                    <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => itemClick('roles', 'Roles', 'roles', 'Shield')}>
                         <ListItemIcon sx={{ minWidth: 32 }}><RolesIcon fontSize="small" /></ListItemIcon>
                         <ListItemText primary="Roles" primaryTypographyProps={{ fontSize: '0.875rem' }} />
                     </ListItemButton>

@@ -14,9 +14,13 @@ exports.getMenu = async (req, res) => {
     }
 };
 
-exports.getFormDefinition = (req, res) => {
+exports.getFormDefinition = async (req, res) => {
     try {
         const idform = Number(req.params.idform);
+
+        // Refrescar caché bajo demanda al entrar a un formulario para evaluar cambios en metadatos
+        await MetadataService.refresh();
+
         const metadata = MetadataService.getFormMetadata(idform);
 
         if (!metadata) {
@@ -250,74 +254,125 @@ exports.saveGridData = async (req, res) => {
         if (!gridMeta) return res.status(404).json({ error: 'Grilla no configurada' });
 
         // vquery normalmente es una vista, para guardar necesitamos saber la tabla real
-        // En una arquitectura compleja tendrias un "XTABLE" asociado. 
-        // Para este MVP vamos a usar vquery si no tiene espacios (y asumiendo que es tabla) o extraer el nombre:
-        const physicalTable = gridMeta.vquery; // Temporalmente usamos vquery
+        const physicalTable = gridMeta.vquery;
 
-        // Generación dinámica segura del Query:
-        // Solo filtramos propiedades internas de AG Grid, el resto se guarda tal cual
-        const columns = Object.keys(data).filter(col =>
-            data[col] !== undefined &&
-            typeof data[col] !== 'object' &&
-            !col.startsWith('_') &&
-            !col.startsWith('__')
-        );
+        // --- FILTRADO DE COLUMNAS PARA GUARDADO ---
+        // Excluimos:
+        // 1. Campos marcados como 'calculado' en los metadatos (XFIELD)
+        // 2. Propiedades internas de AG Grid/JS que empiecen con _
+        // 3. Objetos complejos que no sean valores primitivos
+        const calculatedFields = (gridMeta.fields || []).filter(f => f.calculado).map(f => f.campo.toLowerCase());
 
-        // Sanitizar valores: strings vacías → null (para columnas numéricas de PostgreSQL)
+        // --- VALIDACIONES DE NEGOCIO (OBLIGATORIO Y UNIQUE) ---
+        for (const field of gridMeta.fields) {
+            const val = data[field.campo];
+
+            // 1. Validar Obligatorio (Backend Lock)
+            if (field.obligatorio && (val === undefined || val === null || val === '')) {
+                return res.json({ success: false, error: `El campo '${field.titlefield || field.campo}' es obligatorio.` });
+            }
+
+            // 2. Validar Unique (vunique)
+            if (field.vunique && val !== null && val !== undefined && val !== '') {
+                // Identificar PK para excluir el registro actual en caso de UPDATE
+                let pkField = clientPkField || null;
+                if (!pkField) {
+                    const metaPkField = gridMeta.fields.find(f => f.pk === true);
+                    pkField = metaPkField ? metaPkField.campo : null;
+                }
+
+                let checkSql = `SELECT COUNT(*) FROM ${physicalTable} WHERE ${field.campo} = $1`;
+                let checkParams = [val];
+
+                // Si es un UPDATE, no debemos contar el registro que estamos editando
+                if (isUpdate && recordId && pkField) {
+                    checkSql += ` AND ${pkField} <> $2`;
+                    checkParams.push(recordId);
+                }
+
+                try {
+                    const checkRes = await db.query(checkSql, checkParams);
+                    if (parseInt(checkRes.rows[0].count) > 0) {
+                        return res.json({
+                            success: false,
+                            error: `Validación de Duplicidad: El valor '${val}' ya está registrado en '${field.titlefield || field.campo}'.`
+                        });
+                    }
+                } catch (err) {
+                    console.error("Error validando unicidad:", err.message);
+                    // Si falla el check (ej: vquery es un select complejo), continuamos pero logueamos
+                }
+            }
+        }
+
+        console.log("== DEBUG GUARDADO (Metadata) ==");
+        console.log("Calculated Fields (lowercase):", calculatedFields);
+
+        // Filtrar columnas para el INSERT/UPDATE
+        const columns = Object.keys(data).filter(col => {
+            const colLower = col.toLowerCase();
+            return data[col] !== undefined &&
+                typeof data[col] !== 'object' &&
+                !col.startsWith('_') &&
+                !col.startsWith('__') &&
+                !calculatedFields.includes(colLower);
+        });
+
+        // Sanitizar valores: strings vacías → null
         columns.forEach(col => {
             if (data[col] === '') data[col] = null;
         });
 
-        console.log("== DEBUG GUARDADO ==");
-        console.log("data keys:", Object.keys(data));
-        console.log("final columns:", columns);
+        console.log("== DEBUG GUARDADO (Final) ==");
+        console.log("Final columns to be saved:", columns);
 
         let sql = '';
         const params = [];
 
         if (isUpdate && recordId) {
-            // Usar pkField del cliente si viene, sino detectar
+            // Detección de PK (insensible a mayúsculas)
             let pkField = clientPkField || null;
             if (!pkField) {
                 const metaPkField = gridMeta.fields.find(f => f.pk === true);
                 pkField = metaPkField ? metaPkField.campo : null;
             }
             if (!pkField) {
-                pkField = columns.find(c => c.startsWith('id') || c.endsWith('id')) || columns[0];
+                pkField = columns.find(c => c.toLowerCase().startsWith('id') || c.toLowerCase().endsWith('id')) || columns[0];
             }
 
-            // Retiramos la llave primaria del SET para no sobrescribirla
-            const updateCols = columns.filter(c => c !== pkField);
+            // Retiramos la llave primaria del SET (comparación insensitive)
+            const updateCols = columns.filter(c => c.toLowerCase() !== pkField.toLowerCase());
 
             const setStatements = updateCols.map((col, idx) => `${col} = $${idx + 1}`);
             updateCols.forEach(col => params.push(data[col]));
 
-            params.push(recordId); // El último parámetro es el ID (PK)
+            params.push(recordId); // ID al final
 
             sql = `UPDATE ${physicalTable} SET ${setStatements.join(', ')} WHERE ${pkField} = $${params.length}`;
 
         } else {
-            // INSERT INTO table (col1, col2) VALUES ($1, $2)
             const placeholders = columns.map((_, idx) => `$${idx + 1}`);
             columns.forEach(col => params.push(data[col]));
-
             sql = `INSERT INTO ${physicalTable} (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`;
         }
 
-        console.log("Ejecutando Consulta Dinámica Guardado:", sql);
-        console.log("Valores:", params);
+        console.log("SQL Dinámico:", sql);
+        console.log("Parámetros:", params);
 
         await db.query(sql, params);
 
         res.json({
             success: true,
             message: 'Guardado correctamente',
-            debug: { columns, sql, params, dataBools: Object.keys(data).filter(k => typeof data[k] === 'boolean').map(k => k + '=' + data[k]) }
         });
 
     } catch (error) {
-        console.error('Error insertando/actualizando base de datos:', error);
-        res.status(500).json({ success: false, error: error.message });
+        console.error('❌ Error en saveGridData:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            detail: error.detail || 'Error interno del servidor'
+        });
     }
 };
 

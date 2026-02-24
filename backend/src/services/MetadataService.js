@@ -24,7 +24,12 @@ class MetadataService {
                 sistema: {}
             };
 
-            const resForms = await db.query('SELECT * FROM XFORMS');
+            const resForms = await db.query(`
+                SELECT f.*, 
+                       COALESCE(i.nombre, (SELECT nombre FROM xicons ORDER BY RANDOM() LIMIT 1)) as iconname 
+                FROM XFORMS f 
+                LEFT JOIN XICONS i ON f.iconform = i.idicon
+            `);
             resForms.rows.forEach(f => this.cache.forms[f.idform] = f);
 
             const resGrids = await db.query('SELECT * FROM XGRID');
@@ -73,16 +78,18 @@ class MetadataService {
         const grids = this.cache.grids[idform] || [];
         const controls = this.cache.controls[idform] || [];
 
-        // Empaquetar grids con sus campos
+        // Empaquetar grids con sus campos y configuración de sistema
         const gridsWithFields = grids.map(g => ({
             ...g,
-            fields: this.cache.fields[g.idgrid] || []
+            fields: this.cache.fields[g.idgrid] || [],
+            sistema: this.cache.sistema
         }));
 
         return {
             form,
             grids: gridsWithFields,
-            controls
+            controls,
+            sistema: this.cache.sistema
         };
     }
 

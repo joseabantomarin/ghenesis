@@ -18,6 +18,8 @@ import DynamicForm from './DynamicForm';
 import ConfirmDialog from './ConfirmDialog';
 import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry, AllCommunityModule, themeQuartz } from 'ag-grid-community';
+import { runGridScript } from '../utils/ScriptingEngine';
+import AlertDialog from './AlertDialog';
 
 // Requerido en AG Grid v31+ para que renderice
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -52,7 +54,7 @@ const myTheme = themeQuartz.withParams({
     headerColumnGroupTitleTextAlign: 'center'
 });
 
-const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sactivateData, readonlyMode, simplified, autoFocusFirstRow = true }) => {
+const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingStateChange, allGrids, sactivateData, readonlyMode, simplified, autoFocusFirstRow = true }) => {
     const gridRef = useRef();
     const { user } = useAuth();
     const theme = useTheme();
@@ -77,14 +79,48 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
 
     // Estado para Menú de Reportes (Móvil/Desplegable)
     const [anchorEl, setAnchorEl] = useState(null);
-    const [confirmOpen, setConfirmOpen] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [alertConfig, setAlertConfig] = useState({ open: false, title: '', message: '', severity: 'info' });
+    const [uiStyles, setUiStyles] = useState({});
+
+    // Puente global para los controles HTML personalizados
+    useEffect(() => {
+        window.ghenesis = {
+            run: (action) => {
+                if (gridMeta.ejecuta) {
+                    runGridScript(gridMeta.ejecuta, {
+                        action,
+                        grid: { api: gridRef.current?.api, columnApi: gridRef.current?.columnApi },
+                        data,
+                        selected: selectedRecord,
+                        ui: {
+                            alert: (title, message, severity = 'info') =>
+                                setAlertConfig({ open: true, title, message, severity }),
+                            notify: (msg) => console.log("[Ghenesis Notify]", msg),
+                            setLabel: (key, value) => setUiStyles(prev => ({ ...prev, [key]: { ...prev[key], label: value } })),
+                            setStyle: (key, style) => setUiStyles(prev => ({ ...prev, [key]: { ...prev[key], ...style } }))
+                        },
+                        api: axios
+                    });
+                }
+            }
+        };
+        return () => { delete window.ghenesis; };
+    }, [gridMeta.ejecuta, data, selectedRecord]);
+
+    // Notificar al padre cuando cambia el estado de edición (para ocultar el detail en master-detail)
+    useEffect(() => {
+        if (onEditingStateChange) {
+            onEditingStateChange(!!editingRecord);
+        }
+    }, [editingRecord, onEditingStateChange]);
+    const [isConfirmingExport, setIsConfirmingExport] = useState(false);
     const openMenu = Boolean(anchorEl);
     const handleMenuClick = (event) => setAnchorEl(event.currentTarget);
     const handleMenuClose = () => setAnchorEl(null);
 
     // Estado para Menú Contextual (Click Derecho)
     const [contextMenu, setContextMenu] = useState(null);
-    const [systemShortcuts, setSystemShortcuts] = useState({});
 
     const handleContextMenu = (event) => {
         event.preventDefault();
@@ -110,10 +146,18 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
         let savedState = {};
         try {
             const stored = localStorage.getItem(`grid-col-state-${gridMeta.idgrid}`);
-            if (stored) savedState = JSON.parse(stored);
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                // EL DEVELOPER MANDA: Si la versión de la base de datos es mayor, ignoramos localstorage
+                if (!gridMeta.layout_version || (parsed.version && parsed.version >= gridMeta.layout_version)) {
+                    savedState = parsed.state || {};
+                } else {
+                    console.log('Nueva versión de interfaz detectada, ignorando configuración local');
+                }
+            }
         } catch (e) { }
 
-        // Si hay estado guardado, respetar el orden de las columnas del usuario
+        // Si hay estado guardado válido, respetar el orden de las columnas del usuario
         if (Object.keys(savedState).length > 0) {
             fields.sort((a, b) => {
                 const ia = savedState[a.campo]?.index ?? 999;
@@ -136,12 +180,20 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                 wrapHeaderText: false,
                 autoHeaderHeight: false,
                 headerTooltip: f.titlefield || f.campo,
+                valueFormatter: (params) => {
+                    if (gridMeta.mayusculas && typeof params.value === 'string') {
+                        return params.value.toUpperCase();
+                    }
+                    return params.value;
+                },
                 cellRenderer: (params) => {
                     if (f.tipod === 'B') {
                         return <Checkbox checked={Boolean(params.value)} readOnly size="small" sx={{ p: 0, '& .MuiSvgIcon-root': { fontSize: 18 } }} />;
                     }
                     if (f.campo === 'previsualizacion' || f.campo === 'xicons' || f.tipod === 'X') {
-                        const val = params.value;
+                        // En grillas de iconos, 'previsualizacion' suele ser calculado.
+                        // Usamos params.value si existe, sino intentamos con params.data.nombre
+                        const val = params.value || (f.campo === 'previsualizacion' ? params.data?.nombre : null);
                         if (!val) return null;
                         const iconName = val.charAt(0).toUpperCase() + val.slice(1);
                         const IconComp = Icons[iconName];
@@ -150,6 +202,9 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                                 <IconComp sx={{ fontSize: 20 }} />
                             </Box>
                         ) : val;
+                    }
+                    if (typeof params.value === 'object' && params.value !== null) {
+                        return JSON.stringify(params.value);
                     }
                     return params.value;
                 },
@@ -162,14 +217,20 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                     textAlign: f.alinear === 'D' ? 'right' : f.alinear === 'C' ? 'center' : 'left',
                     backgroundColor: f.color || undefined,
                     color: f.fontcolor || undefined,
-                    fontWeight: f.fontbold ? 'bold' : 'normal'
+                    fontWeight: f.fontbold ? 'bold' : 'normal',
+                    textTransform: gridMeta.mayusculas ? 'uppercase' : 'none'
+                },
+                valueSetter: (params) => {
+                    let newValue = params.newValue;
+                    if (gridMeta.mayusculas && typeof newValue === 'string') {
+                        newValue = newValue.toUpperCase();
+                    }
+                    params.data[f.campo] = newValue;
+                    return true;
                 }
             };
 
             if (f.cabeza && f.cabeza.trim() !== '') {
-                // Si la columna tiene "cabeza", agruparla
-                // Lógica Ghenesis: los campos marcados como 'oculto' dentro de un grupo 
-                // se consideran columnas de "detalle" (solo se ven al expandir)
                 if (f.oculto) {
                     colDef.columnGroupShow = 'open';
                 }
@@ -180,8 +241,8 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                     currentGroup = {
                         headerName: f.cabeza,
                         children: [colDef],
-                        marryChildren: false, // Permitir que se expandan/colapsen
-                        openByDefault: false   // Empezar colapsado
+                        marryChildren: false,
+                        openByDefault: false
                     };
                     defs.push(currentGroup);
                 }
@@ -192,7 +253,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
         });
 
         return defs;
-    }, [gridMeta.idgrid, gridMeta.fields]);
+    }, [gridMeta.idgrid, gridMeta.fields, gridMeta.layout_version]);
 
     const hasGroups = useMemo(() => {
         return (gridMeta.fields || []).some(f => f.cabeza && f.cabeza.trim() !== '');
@@ -200,10 +261,16 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
 
     // Guardar estado completo de columnas (orden + anchos)
     const saveColumnState = (api) => {
-        const allCols = api.getColumnState();
-        const state = {};
-        allCols.forEach((c, i) => { state[c.colId] = { width: c.width, index: i }; });
-        localStorage.setItem(`grid-col-state-${gridMeta.idgrid}`, JSON.stringify(state));
+        if (!api) return;
+        const columnState = api.getColumnState();
+        const stateToStore = {};
+        columnState.forEach((col, index) => {
+            stateToStore[col.colId] = { width: col.width, index };
+        });
+        localStorage.setItem(`grid-col-state-${gridMeta.idgrid}`, JSON.stringify({
+            version: gridMeta.layout_version || 0,
+            state: stateToStore
+        }));
     };
 
     const handleColumnResized = (e) => {
@@ -243,7 +310,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
         };
     }, []);
 
-    const fetchData = async () => {
+    const fetchData = React.useCallback(async () => {
         if (gridMeta.gparent && !masterRecord) {
             setData([]);
             setTotalRecords(0);
@@ -261,11 +328,8 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
             };
 
             if (gridMeta.gparent && masterRecord) {
-                // Determinar el campo de enlace (Foreign Key) en la grilla detallle.
-                // Por convención, usamos el nombre de la PK del registro maestro.
                 const pkHierarchy = ['idfield', 'idcontrol', 'idgrid', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'iduser', 'idrole', 'idacademia', 'idcurso', 'idform', 'idsistema', 'id'];
                 const masterPkField = pkHierarchy.find(key => masterRecord[key] !== undefined) || Object.keys(masterRecord)[0];
-
                 params.masterField = masterPkField;
                 params.masterValue = masterRecord[masterPkField];
                 params.masterRecordPayload = JSON.stringify(masterRecord);
@@ -284,20 +348,14 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
         } finally {
             setLoading(false);
         }
-    };
+    }, [idform, gridMeta.idgrid, gridMeta.gparent, masterRecord, page, rowsPerPage, sortField, sortOrder, gridFilters]);
 
     useEffect(() => {
         fetchData();
     }, [page, rowsPerPage, sortField, sortOrder, gridFilters, gridMeta.idgrid, masterRecord, sactivateData]);
 
-    // Cargar Atajos del Sistema
-    useEffect(() => {
-        axios.get('/api/dynamic/sistema-config').then(res => {
-            if (res.data.success && res.data.data.shortcuts) {
-                setSystemShortcuts(res.data.data.shortcuts);
-            }
-        }).catch(() => { });
-    }, []);
+    // Atajos dinámicos provenientes de la configuración del sistema
+    const systemShortcuts = useMemo(() => gridMeta?.sistema?.shortcuts || {}, [gridMeta?.sistema?.shortcuts]);
 
     // Escuchar Atajos de Teclado Globales (F5 y otros)
     useEffect(() => {
@@ -307,32 +365,60 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
             // Buscar acción asociada al shortcut en systemShortcuts (formato: { "add": "f2", ... })
             let customAction = null;
             for (const [actionName, shortcutValue] of Object.entries(systemShortcuts)) {
-                if (shortcutValue && shortcutValue.toLowerCase() === pressedKey) {
+                if (shortcutValue && typeof shortcutValue === 'string' && shortcutValue.toLowerCase() === pressedKey) {
                     customAction = actionName.toUpperCase();
                     break;
                 }
             }
 
-            // Evitar que F5 refresque la página, solo refrescar la data
-            if (e.key === 'F5' || customAction === 'REFRESH') {
+            // Log de depuración para el programador (visible en consola)
+            if (customAction || e.key.startsWith('F')) {
+                console.log(`[Keyboard] Key: ${pressedKey}, Action: ${customAction || 'None'}`);
+            }
+
+            // 1. REFRESH: F5 o lo configurado (siempre se permite F5)
+            if (customAction === 'REFRESH' || (e.key === 'F5' && !customAction)) {
                 e.preventDefault();
+                e.stopPropagation();
                 fetchData();
+                return;
             }
 
-            if (e.key === 'F2' || customAction === 'ADD') {
+            // 2. AGREGAR (ADD)
+            if (customAction === 'ADD') {
                 e.preventDefault();
+                e.stopPropagation();
                 setEditingRecord({});
+                return;
             }
 
-            if ((e.ctrlKey && (e.key === 'Delete' || e.key === 'Backspace')) || customAction === 'DELETE') {
+            // 3. EDITAR (EDIT)
+            if (customAction === 'EDIT') {
                 e.preventDefault();
+                e.stopPropagation();
+                handleEditSelected();
+                return;
+            }
+
+            // 4. ELIMINAR (DELETE)
+            if (customAction === 'DELETE') {
+                e.preventDefault();
+                e.stopPropagation();
+                handleDeleteSelected();
+                return;
+            }
+
+            // Fallback para DELETE (Ctrl+Supr)
+            if ((e.ctrlKey && (e.key === 'Delete' || e.key === 'Backspace')) && !customAction) {
+                e.preventDefault();
+                e.stopPropagation();
                 handleDeleteSelected();
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [selectedRecord, systemShortcuts]);
+    }, [selectedRecord, systemShortcuts, fetchData]);
 
     const handleChangePage = (event, newPage) => {
         setPage(newPage);
@@ -394,11 +480,11 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
 
     const handleDeleteSelected = () => {
         if (!selectedRecord) return;
-        setConfirmOpen(true);
+        setIsDeleting(true);
     };
 
     const executeDelete = async () => {
-        setConfirmOpen(false);
+        setIsDeleting(false);
         let pkField = Object.keys(selectedRecord).find(k => k.startsWith('id') || k.endsWith('id'));
         if (!pkField) pkField = Object.keys(selectedRecord)[0];
         const id = selectedRecord[pkField];
@@ -415,7 +501,12 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
         }
     };
 
-    const handleExportXlsx = async () => {
+    const handleExportXlsx = () => {
+        setIsConfirmingExport(true);
+    };
+
+    const executeExport = async () => {
+        setIsConfirmingExport(false);
         if (!gridRef.current) return;
         const cols = gridRef.current.api.getColumnDefs();
         const headers = cols.map(c => c.headerName || c.field);
@@ -524,6 +615,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                 onClose={closeEdit}
                 allGrids={allGrids}
                 readonlyMode={readonlyMode}
+                uiStyles={uiStyles}
             />
         );
     }
@@ -531,6 +623,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
     return (
         <Paper
             elevation={gridMeta.gparent ? 0 : 3}
+            className={gridMeta.mayusculas ? 'force-uppercase' : ''}
             sx={{
                 width: '100%',
                 height: gridMeta.gparent ? '500px' : '100%',
@@ -541,6 +634,14 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                 border: gridMeta.gparent ? 'none' : undefined
             }}
         >
+            {/* Área de Cabecera Personalizada (Metadata) */}
+            {gridMeta.cabecera && (
+                <Box
+                    sx={{ p: 1, borderBottom: '1px solid #eee' }}
+                    dangerouslySetInnerHTML={{ __html: gridMeta.cabecera }}
+                />
+            )}
+
             {/* Header: Titulo y Botones (Oculto en simplified) */}
             {!simplified && (
                 <Box sx={{
@@ -556,8 +657,14 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                     gap: { xs: 1, sm: 0 }
                 }}>
                     <Box sx={{ flex: 1, minWidth: 0, width: { xs: '100%', sm: 'auto' }, pr: { sm: 2 } }}>
-                        <Typography noWrap sx={{ fontWeight: 'bold', fontSize: { xs: '0.9rem', sm: '1.05rem' }, color: 'var(--active-tab-color)', m: 0 }}>
-                            {gridMeta.titulo}
+                        <Typography noWrap sx={{
+                            fontWeight: 'bold',
+                            fontSize: { xs: '0.9rem', sm: '1.05rem' },
+                            color: uiStyles.title?.color || 'var(--active-tab-color)',
+                            display: uiStyles.title?.visible === false ? 'none' : 'block',
+                            m: 0
+                        }}>
+                            {uiStyles.title?.label || gridMeta.titulo}
                         </Typography>
                     </Box>
                     {/* Barra de Herramientas Principal */}
@@ -567,47 +674,93 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                                 <Button
                                     variant="outlined" color="success"
                                     onClick={() => setEditingRecord({})}
+                                    disabled={uiStyles.new?.disabled}
                                     startIcon={isMobile ? null : <AddIcon />}
-                                    sx={{ borderRadius: '8px', textTransform: 'none', px: isMobile ? 1 : 2, py: 0.4, minWidth: isMobile ? 40 : 'auto', fontWeight: 600 }}
+                                    sx={{
+                                        borderRadius: '8px', textTransform: 'none', px: isMobile ? 1 : 2, py: 0.4, minWidth: isMobile ? 40 : 'auto', fontWeight: 600,
+                                        display: uiStyles.new?.visible === false ? 'none' : 'flex',
+                                        backgroundColor: uiStyles.new?.backgroundColor,
+                                        color: uiStyles.new?.color,
+                                        borderColor: uiStyles.new?.borderColor
+                                    }}
                                 >
-                                    {isMobile ? <AddIcon /> : "Nuevo"}
+                                    {isMobile ? <AddIcon /> : (uiStyles.new?.label || "Nuevo")}
                                 </Button>
                             )}
 
                             <Button
                                 variant="outlined" color="primary"
-                                disabled={!selectedRecord || gridMeta.readonlyg}
+                                disabled={!selectedRecord || gridMeta.readonlyg || uiStyles.edit?.disabled}
                                 onClick={handleEditSelected}
                                 startIcon={isMobile ? null : <EditIcon />}
-                                sx={{ borderRadius: '8px', textTransform: 'none', px: isMobile ? 1 : 2, py: 0.75, minWidth: isMobile ? 40 : 'auto', fontWeight: 600 }}
+                                sx={{
+                                    borderRadius: '8px', textTransform: 'none', px: isMobile ? 1 : 2, py: 0.75, minWidth: isMobile ? 40 : 'auto', fontWeight: 600,
+                                    display: uiStyles.edit?.visible === false ? 'none' : 'flex',
+                                    backgroundColor: uiStyles.edit?.backgroundColor,
+                                    color: uiStyles.edit?.color,
+                                    borderColor: uiStyles.edit?.borderColor
+                                }}
                             >
-                                {isMobile ? <EditIcon /> : "Editar"}
+                                {isMobile ? <EditIcon /> : (uiStyles.edit?.label || "Editar")}
                             </Button>
 
                             {!readonlyMode && (
                                 <Button
                                     variant="outlined" color="error" disableFocusRipple
-                                    disabled={!selectedRecord || gridMeta.readonlyg}
+                                    disabled={!selectedRecord || gridMeta.readonlyg || uiStyles.delete?.disabled}
                                     onClick={handleDeleteSelected}
                                     startIcon={isMobile ? null : <DeleteIcon />}
-                                    sx={{ borderRadius: '8px', textTransform: 'none', px: isMobile ? 1 : 2, py: 0.75, minWidth: isMobile ? 40 : 'auto', fontWeight: 600 }}
+                                    sx={{
+                                        borderRadius: '8px', textTransform: 'none', px: isMobile ? 1 : 2, py: 0.75, minWidth: isMobile ? 40 : 'auto', fontWeight: 600,
+                                        display: uiStyles.delete?.visible === false ? 'none' : 'flex',
+                                        backgroundColor: uiStyles.delete?.backgroundColor,
+                                        color: uiStyles.delete?.color,
+                                        borderColor: uiStyles.delete?.borderColor
+                                    }}
                                 >
-                                    {isMobile ? <DeleteIcon /> : "Borrar"}
+                                    {isMobile ? <DeleteIcon /> : (uiStyles.delete?.label || "Borrar")}
                                 </Button>
                             )}
 
                             <Box sx={{ borderLeft: '1px solid', borderColor: 'divider', height: 28, mx: 0.5 }}></Box>
 
-                            <IconButton onClick={() => fetchData()} color="default" sx={{ borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38 }}>
+                            <IconButton
+                                onClick={() => fetchData()} color="default"
+                                disabled={uiStyles.refresh?.disabled}
+                                sx={{
+                                    borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38,
+                                    display: uiStyles.refresh?.visible === false ? 'none' : 'inline-flex',
+                                    color: uiStyles.refresh?.color,
+                                    backgroundColor: uiStyles.refresh?.backgroundColor
+                                }}
+                            >
                                 <RefreshIcon />
                             </IconButton>
 
-                            <IconButton color="info" onClick={handleExportXlsx} sx={{ borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38 }}>
+                            <IconButton
+                                color="info" onClick={handleExportXlsx}
+                                disabled={uiStyles.export?.disabled}
+                                sx={{
+                                    borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38,
+                                    display: uiStyles.export?.visible === false ? 'none' : 'inline-flex',
+                                    color: uiStyles.export?.color,
+                                    backgroundColor: uiStyles.export?.backgroundColor
+                                }}
+                            >
                                 <DownloadIcon />
                             </IconButton>
 
-                            <Tooltip title="Más opciones">
-                                <IconButton color="default" onClick={handleMenuClick} sx={{ borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38 }}>
+                            <Tooltip title={uiStyles.options?.label || "Más opciones"}>
+                                <IconButton
+                                    color="default" onClick={handleMenuClick}
+                                    disabled={uiStyles.options?.disabled}
+                                    sx={{
+                                        borderRadius: '8px', border: '1px solid', borderColor: 'divider', width: 38, height: 38,
+                                        display: uiStyles.options?.visible === false ? 'none' : 'inline-flex',
+                                        color: uiStyles.options?.color,
+                                        backgroundColor: uiStyles.options?.backgroundColor
+                                    }}
+                                >
                                     <MoreVertIcon />
                                 </IconButton>
                             </Tooltip>
@@ -702,6 +855,28 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                         onColumnResized={handleColumnResized}
                         onColumnMoved={handleColumnMoved}
                         onCellValueChanged={handleCellValueChanged}
+                        stopEditingWhenCellsLoseFocus={true}
+                        onCellKeyDown={(params) => {
+                            const { event, rowIndex, api, column } = params;
+                            if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+                                if (api.getEditingCells().length > 0) {
+                                    api.stopEditing();
+
+                                    // Calcular siguiente fila
+                                    const nextIndex = event.key === 'ArrowDown' ? rowIndex + 1 : rowIndex - 1;
+                                    const rowCount = api.getDisplayedRowCount();
+
+                                    if (nextIndex >= 0 && nextIndex < rowCount) {
+                                        // Dar un pequeño tiempo para que el Grid procese el cierre de la edición
+                                        setTimeout(() => {
+                                            api.setFocusedCell(nextIndex, column.getColId());
+                                            const node = api.getDisplayedRowAtIndex(nextIndex);
+                                            if (node) node.setSelected(true);
+                                        }, 50);
+                                    }
+                                }
+                            }
+                        }}
                         onFirstDataRendered={(params) => {
                             if (!autoFocusFirstRow) return;
                             // Seleccionar y enfocar el primer registro al cargar los datos
@@ -767,6 +942,14 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
                         {focusedHelpText}
                     </Typography>
                 </Box>
+            )}
+
+            {/* Área de Pie Personalizada (Metadata) */}
+            {gridMeta.pie && (
+                <Box
+                    sx={{ p: 1, borderTop: '1px solid #eee' }}
+                    dangerouslySetInnerHTML={{ __html: gridMeta.pie }}
+                />
             )}
 
             {/* Paginador personalizado */}
@@ -845,17 +1028,38 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, allGrids, sa
             )}
             {/* Solo mostrar Diálogo de Confirmación si no es simplificado */}
             {!simplified && (
-                <ConfirmDialog
-                    open={confirmOpen}
-                    title="Eliminar registro"
-                    message="¿Estás seguro de que deseas eliminar el registro seleccionado? Esta acción no se puede deshacer."
-                    confirmText="Eliminar"
-                    cancelText="Cancelar"
-                    onConfirm={executeDelete}
-                    onCancel={() => setConfirmOpen(false)}
-                />
+                <>
+                    {/* Diálogo de Confirmación para Exportación */}
+                    <ConfirmDialog
+                        open={isConfirmingExport}
+                        title="Exportar a Excel"
+                        message={`¿Deseas descargar los ${data.length} registros actuales en formato Excel?`}
+                        confirmText="Exportar"
+                        type="info"
+                        onConfirm={executeExport}
+                        onCancel={() => setIsConfirmingExport(false)}
+                    />
+
+                    <ConfirmDialog
+                        open={isDeleting}
+                        title="Confirmar Eliminación"
+                        message="¿Estás seguro de que deseas eliminar el registro seleccionado? Esta acción no se puede deshacer."
+                        confirmText="Eliminar"
+                        type="error"
+                        onConfirm={executeDelete}
+                        onCancel={() => setIsDeleting(false)}
+                    />
+
+                    <AlertDialog
+                        open={alertConfig.open}
+                        title={alertConfig.title}
+                        message={alertConfig.message}
+                        severity={alertConfig.severity}
+                        onClose={() => setAlertConfig({ ...alertConfig, open: false })}
+                    />
+                </>
             )}
-        </Paper >
+        </Paper>
     );
 };
 
