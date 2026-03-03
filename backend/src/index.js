@@ -28,7 +28,14 @@ db.query('SELECT NOW()')
     .finally(() => {
         // Inicializaremos el MetadataService para cachear los meta-datos
         MetadataService.initCache().then(() => {
-            console.log('✅ Motor Metadata iniciado');
+            console.log('✅ Motor Metadata iniciado. Listo para servir tráfico.');
+
+            // Iniciar servidor SOLO cuando el caché en memoria esté listo
+            app.listen(PORT, () => {
+                console.log(`🚀 Servidor backend escuchando en http://localhost:${PORT}`);
+            });
+        }).catch(err => {
+            console.error('❌ Falla crítica al inicializar Metadata:', err);
         });
     });
 
@@ -39,8 +46,4 @@ app.use('/api/dynamic', authMiddleware, dynamicApiRoutes);
 // Endpoint de prueba
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', message: 'Ghenesis Backend Engine is running' });
-});
-
-app.listen(PORT, () => {
-    console.log(`🚀 Servidor backend escuchando en http://localhost:${PORT}`);
 });

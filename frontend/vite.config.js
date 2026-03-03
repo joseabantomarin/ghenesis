@@ -9,7 +9,7 @@ export default defineConfig({
         host: true, // Esto permite conexiones desde tu IP local
         proxy: {
             '/api': {
-                target: 'http://localhost:3000',
+                target: process.env.BACKEND_URL || 'http://localhost:3000',
                 changeOrigin: true
             }
         }

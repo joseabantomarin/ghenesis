@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres_db:
     image: postgres:17
@@ -13,6 +11,34 @@ services:
       - "5433:5432" # Puerto 5433 en tu Mac mapea al 5432 dentro del contenedor
     volumes:
       - ./postgres_data:/var/lib/postgresql/data # Persistencia de datos en carpeta local
+
+  backend:
+    build:
+      context: ./backend
+    container_name: ghenesis_backend
+    restart: always
+    environment:
+      - DB_HOST=postgres_db
+      - DB_PORT=5432
+      - DB_USER=joseabanto
+      - DB_PASSWORD=mysecretpassword
+      - DB_NAME=ghenesis
+      - PORT=3000
+      - JWT_SECRET=ghenesis_ultra_secret_key_2026
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres_db
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: ghenesis_frontend
+    restart: always
+    ports:
+      - "8077:80" # El Nginx corre en el 80 dentro del contenedor, el cual mapeamos al 8080 localmente
+    depends_on:
+      - backend
 
 volumes:
   postgres_data:

@@ -7,7 +7,7 @@ exports.getMenu = async (req, res) => {
         // Al pedir el menú (típicamente al pulsar F5 o cargar el sistema cerrado), forzamos
         // la recarga de toda la estructura de la base de datos para no depender del reinicio de Node.
         await MetadataService.refresh();
-        const menu = MetadataService.getAppMenu();
+        const menu = await MetadataService.getAppMenu();
         res.json({ success: true, data: menu });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -21,7 +21,7 @@ exports.getFormDefinition = async (req, res) => {
         // Refrescar caché bajo demanda al entrar a un formulario para evaluar cambios en metadatos
         await MetadataService.refresh();
 
-        const metadata = MetadataService.getFormMetadata(idform);
+        const metadata = await MetadataService.getFormMetadata(idform);
 
         if (!metadata) {
             return res.status(404).json({ success: false, error: 'Formulario no encontrado en metadatos' });
@@ -33,9 +33,9 @@ exports.getFormDefinition = async (req, res) => {
     }
 };
 
-exports.getSistemaConfig = (req, res) => {
+exports.getSistemaConfig = async (req, res) => {
     try {
-        const config = MetadataService.getSistemaConfig();
+        const config = await MetadataService.getSistemaConfig();
         res.json({ success: true, data: config });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -79,19 +79,46 @@ const buildWrappedQuery = async (baseSql, baseParams, reqQuery, gridMeta) => {
         try {
             const filters = JSON.parse(reqQuery.filters);
             Object.keys(filters).forEach(colId => {
-                const isValidField = gridMeta.fields.some(f => f.campo === colId);
-                if (isValidField) {
+                const fieldDef = gridMeta.fields.find(f => f.campo === colId);
+                if (fieldDef) {
                     const filterObj = filters[colId];
+                    const dbColName = colId;
+
                     if (filterObj.filterType === 'text') {
-                        // AG Grid 'contains' match
-                        whereClauses.push(`${colId} ILIKE $${paramIndex}`);
+                        // Si es un campo de fecha o timestamp en la DB, usamos to_char para que la búsqueda sea 
+                        // independiente de la configuración regional de la DB.
+                        // Buscamos tanto en formato ISO (YYYY-MM-DD) como en el formato de visualización.
+                        if (fieldDef.tipod === 'D' || fieldDef.tipod === 'T') {
+                            const visualFormat = (fieldDef.formato || 'DD/MM/YYYY').toUpperCase();
+                            whereClauses.push(`(to_char(${dbColName}, 'YYYY-MM-DD') ILIKE $${paramIndex} OR to_char(${dbColName}, '${visualFormat}') ILIKE $${paramIndex})`);
+                        } else {
+                            whereClauses.push(`${dbColName} ILIKE $${paramIndex}`);
+                        }
                         queryParams.push(`%${filterObj.filter}%`);
                         paramIndex++;
                     } else if (filterObj.filterType === 'number') {
                         // AG Grid number match ('equals' default)
-                        whereClauses.push(`${colId} = $${paramIndex}`);
+                        whereClauses.push(`${dbColName} = $${paramIndex}`);
                         queryParams.push(filterObj.filter);
                         paramIndex++;
+                    } else if (filterObj.filterType === 'date') {
+                        // AG Grid date filter (Pasa la fecha como YYYY-MM-DD)
+                        // Casting a ::date en Postgres para ignorar la hora en la comparación
+                        const dateVal = filterObj.dateFrom ? filterObj.dateFrom.split(' ')[0] : null;
+                        if (dateVal) {
+                            if (filterObj.type === 'equals') {
+                                whereClauses.push(`${dbColName}::date = $${paramIndex}`);
+                            } else if (filterObj.type === 'lessThan') {
+                                whereClauses.push(`${dbColName}::date < $${paramIndex}`);
+                            } else if (filterObj.type === 'greaterThan') {
+                                whereClauses.push(`${dbColName}::date > $${paramIndex}`);
+                            } else {
+                                // Default equals if unknown type
+                                whereClauses.push(`${dbColName}::date = $${paramIndex}`);
+                            }
+                            queryParams.push(dateVal);
+                            paramIndex++;
+                        }
                     }
                 }
             });
@@ -100,22 +127,90 @@ const buildWrappedQuery = async (baseSql, baseParams, reqQuery, gridMeta) => {
         }
     }
 
+    // --- SISTEMA FLUIDO DE FILTROS EXTERNOS ---
+    const systemParams = ['page', 'limit', 'sortField', 'sortOrder', 'filters', 'search', 'masterField', 'masterValue', 'masterRecordPayload'];
+    const operators = {
+        '_ge': '>=',
+        '_le': '<=',
+        '_gt': '>',
+        '_lt': '<',
+        '_ne': '<>',
+        '_like': 'ILIKE'
+    };
+
+    Object.keys(reqQuery).forEach(key => {
+        if (systemParams.includes(key)) return;
+
+        // Identificar si la clave tiene un operador al final (ej: fecha_ge)
+        let operator = '=';
+        let fieldName = key;
+
+        for (const [suffix, op] of Object.entries(operators)) {
+            if (key.toLowerCase().endsWith(suffix)) {
+                operator = op;
+                fieldName = key.slice(0, -suffix.length);
+                break;
+            }
+        }
+
+        const fieldDef = (gridMeta.fields || []).find(f => f.campo.toLowerCase() === fieldName.toLowerCase());
+        if (fieldDef) {
+            const value = reqQuery[key];
+            if (value !== undefined && value !== null && value !== '' && value !== 'null') {
+                const dbField = fieldDef.campo;
+
+                if (operator === 'ILIKE') {
+                    whereClauses.push(`${dbField} ILIKE $${paramIndex}`);
+                    queryParams.push(`%${value}%`);
+                } else {
+                    whereClauses.push(`${dbField} ${operator} $${paramIndex}`);
+                    queryParams.push(value);
+                }
+                paramIndex++;
+            }
+        }
+    });
+
     if (whereClauses.length > 0) {
         sql += ` WHERE ` + whereClauses.join(' AND ');
     }
 
-    // Recuperamos el Count MIENTRAS mantenemos el filtro (antes de paginacion y orden)
-    const finalCountSql = `SELECT COUNT(*) FROM (${sql}) AS count_query`;
-    const finalCountRes = await db.query(finalCountSql, queryParams);
-    const finalTotalRecords = finalCountRes?.rows?.[0]?.count ? parseInt(finalCountRes.rows[0].count) : 0;
+    // Recuperamos el Count y los Totales MIENTRAS mantenemos el filtro (antes de paginacion y orden)
+    const totalizableFields = (gridMeta.fields || []).filter(f => f.totalizar && (f.tipod === 'I' || f.tipod === 'F'));
+
+    let statsSql = `SELECT COUNT(*) as count`;
+    if (totalizableFields.length > 0) {
+        const sumClauses = totalizableFields.map(f => `SUM(${f.campo}) as total_${f.campo}`);
+        statsSql += `, ${sumClauses.join(', ')}`;
+    }
+    statsSql += ` FROM (${sql}) AS stats_query`;
+
+    const statsRes = await db.query(statsSql, queryParams);
+    const finalTotalRecords = statsRes?.rows?.[0]?.count ? parseInt(statsRes.rows[0].count) : 0;
+
+    const aggregates = {};
+    if (totalizableFields.length > 0 && statsRes.rows[0]) {
+        totalizableFields.forEach(f => {
+            aggregates[f.campo] = parseFloat(statsRes.rows[0][`total_${f.campo}`]) || 0;
+        });
+    }
 
     // Agregar ORDENAMIENTO (ORDER BY) si viene del cliente
+    // ... (rest of the code)
     const { sortField, sortOrder } = reqQuery;
     if (sortField) {
-        const isValidField = gridMeta.fields.some(f => f.campo === sortField);
-        if (isValidField) {
+        const field = gridMeta.fields.find(f => f.campo === sortField);
+        if (field) {
             const order = (sortOrder || '').toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
-            sql += ` ORDER BY ${sortField} ${order}`;
+            const dbSortField = sortField;
+            const isNumeric = (field.tipod === 'I' || field.tipod === 'F');
+
+            // Para campos Numéricos (I o F) que no sean delegados de texto, tratar los NULL como ceros
+            if (isNumeric) {
+                sql += ` ORDER BY COALESCE(${dbSortField}, 0) ${order}`;
+            } else {
+                sql += ` ORDER BY ${dbSortField} ${order}`;
+            }
         }
     }
 
@@ -126,7 +221,8 @@ const buildWrappedQuery = async (baseSql, baseParams, reqQuery, gridMeta) => {
     const offset = (page - 1) * limit;
 
     if (limit > 0) {
-        sql += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+        const pIndex = paramIndex;
+        sql += ` LIMIT $${pIndex} OFFSET $${pIndex + 1}`;
         queryParams.push(limit, offset);
     }
 
@@ -144,7 +240,8 @@ const buildWrappedQuery = async (baseSql, baseParams, reqQuery, gridMeta) => {
             page,
             limit,
             total: finalTotalRecords,
-            totalPages: Math.ceil(finalTotalRecords / (limit || 1))
+            totalPages: Math.ceil(finalTotalRecords / (limit || 1)),
+            aggregates // <- Totales calculados en el servidor sobre el universo filtrado
         }
     };
 };
@@ -155,7 +252,7 @@ exports.getGridData = async (req, res) => {
         const idform = Number(req.params.idform);
         const idgrid = Number(req.params.idgrid);
 
-        const metadata = MetadataService.getFormMetadata(idform);
+        const metadata = await MetadataService.getFormMetadata(idform);
         if (!metadata) return res.status(404).json({ error: 'Módulo no existe' });
 
         const gridMeta = metadata.grids.find(g => g.idgrid === idgrid);
@@ -179,11 +276,11 @@ exports.getGridData = async (req, res) => {
             }
 
             const contextParams = {
+                ...req.query, // Exponer todos los parámetros de la URL (incluyendo extraParams y search)
                 page, limit, offset,
-                search: req.query.search,
                 masterField: req.query.masterField,
                 masterValue: req.query.masterValue,
-                masterRecord: decodedMasterRecord, // <- Se expuso todo el objeto padre al SandBox
+                masterRecord: decodedMasterRecord,
                 sortField: req.query.sortField,
                 sortOrder: req.query.sortOrder
             };
@@ -194,7 +291,14 @@ exports.getGridData = async (req, res) => {
             if (sopenResult && sopenResult.wrapQuery) {
                 try {
                     const wrappedResult = await buildWrappedQuery(sopenResult.wrapQuery, sopenResult.wrapParams || [], req.query, gridMeta);
-                    return res.json({ success: true, ...wrappedResult });
+                    return res.json({
+                        success: true,
+                        data: wrappedResult.data,
+                        meta: {
+                            ...wrappedResult.meta,
+                            uiStyles: sopenResult.uiStyles || undefined
+                        }
+                    });
                 } catch (e) {
                     return res.status(500).json({ success: false, error: 'Error ejecutando sopen WrapQuery: ' + e.message });
                 }
@@ -208,7 +312,9 @@ exports.getGridData = async (req, res) => {
                     page,
                     limit,
                     total: sopenResult?.total || (sopenResult?.data?.length || sopenResult?.length || 0),
-                    totalPages: Math.ceil((sopenResult?.total || sopenResult?.length || 0) / (limit || 1))
+                    totalPages: Math.ceil((sopenResult?.total || sopenResult?.length || 0) / (limit || 1)),
+                    aggregates: sopenResult?.aggregates || {}, // ← Soporte para totales en scripts directos
+                    uiStyles: sopenResult?.uiStyles || undefined // ← Soporte para inyectar UI global desde sopen
                 }
             });
         }
@@ -247,14 +353,15 @@ exports.saveGridData = async (req, res) => {
         const idgrid = Number(req.params.idgrid);
         const { data, isUpdate, recordId, pkField: clientPkField } = req.body;
 
-        const metadata = MetadataService.getFormMetadata(idform);
+        const metadata = await MetadataService.getFormMetadata(idform);
         if (!metadata) return res.status(404).json({ error: 'Módulo no existe' });
 
         const gridMeta = metadata.grids.find(g => g.idgrid === idgrid);
         if (!gridMeta) return res.status(404).json({ error: 'Grilla no configurada' });
 
         // vquery normalmente es una vista, para guardar necesitamos saber la tabla real
-        const physicalTable = gridMeta.vquery;
+        // Replicando la arquitectura Delphi: XGRID.nombre contiene la tabla física pura
+        const physicalTable = gridMeta.nombre;
 
         // --- FILTRADO DE COLUMNAS PARA GUARDADO ---
         // Excluimos:
@@ -305,26 +412,36 @@ exports.saveGridData = async (req, res) => {
             }
         }
 
-        console.log("== DEBUG GUARDADO (Metadata) ==");
-        console.log("Calculated Fields (lowercase):", calculatedFields);
+
+        // Mapeo Datafield (Campos Virtuales -> Columnas Físicas)
+        const skipColumns = new Set();
+        const dataToSave = { ...data };
+
+        gridMeta.fields.forEach(field => {
+            if (field.datafield && field.datafield.trim() !== '') {
+                // Solo registramos el campo virtual puro para no intentarlo guardar y evitar fallar, 
+                // la responsabilidad de sincronizar el campo físico recae puramente en React.
+                skipColumns.add(field.campo.toLowerCase());
+            }
+        });
 
         // Filtrar columnas para el INSERT/UPDATE
-        const columns = Object.keys(data).filter(col => {
+        const columns = Object.keys(dataToSave).filter(col => {
             const colLower = col.toLowerCase();
-            return data[col] !== undefined &&
-                typeof data[col] !== 'object' &&
+            const val = dataToSave[col];
+            return val !== undefined &&
+                (typeof val !== 'object' || val === null || val instanceof Date) &&
                 !col.startsWith('_') &&
                 !col.startsWith('__') &&
-                !calculatedFields.includes(colLower);
+                !calculatedFields.includes(colLower) &&
+                !skipColumns.has(colLower);
         });
 
         // Sanitizar valores: strings vacías → null
         columns.forEach(col => {
-            if (data[col] === '') data[col] = null;
+            if (dataToSave[col] === '') dataToSave[col] = null;
         });
 
-        console.log("== DEBUG GUARDADO (Final) ==");
-        console.log("Final columns to be saved:", columns);
 
         let sql = '';
         const params = [];
@@ -344,7 +461,7 @@ exports.saveGridData = async (req, res) => {
             const updateCols = columns.filter(c => c.toLowerCase() !== pkField.toLowerCase());
 
             const setStatements = updateCols.map((col, idx) => `${col} = $${idx + 1}`);
-            updateCols.forEach(col => params.push(data[col]));
+            updateCols.forEach(col => params.push(dataToSave[col]));
 
             params.push(recordId); // ID al final
 
@@ -352,18 +469,17 @@ exports.saveGridData = async (req, res) => {
 
         } else {
             const placeholders = columns.map((_, idx) => `$${idx + 1}`);
-            columns.forEach(col => params.push(data[col]));
+            columns.forEach(col => params.push(dataToSave[col]));
             sql = `INSERT INTO ${physicalTable} (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`;
         }
 
-        console.log("SQL Dinámico:", sql);
-        console.log("Parámetros:", params);
 
         await db.query(sql, params);
 
         res.json({
             success: true,
             message: 'Guardado correctamente',
+            data: data
         });
 
     } catch (error) {
@@ -385,19 +501,19 @@ exports.deleteGridData = async (req, res) => {
         const idgrid = Number(req.params.idgrid);
         const { id } = req.params;
 
-        const metadata = MetadataService.getFormMetadata(idform);
+        const metadata = await MetadataService.getFormMetadata(idform);
         if (!metadata) return res.status(404).json({ error: 'Módulo no existe' });
 
         const gridMeta = metadata.grids.find(g => g.idgrid === idgrid);
         if (!gridMeta) return res.status(404).json({ error: 'Grilla no configurada' });
 
-        const physicalTable = gridMeta.vquery;
+        // Replicando arquitectura Delphi: La tabla real reside en gridMeta.nombre
+        const physicalTable = gridMeta.nombre;
         // Identificar el campo Primary Key (PK) buscando 'id' o usando el primer campo oculto/int
         const allowedFields = gridMeta.fields.map(f => f.campo);
         const pkField = allowedFields.find(c => c.startsWith('id') || c.endsWith('id')) || allowedFields[0];
 
         const sql = `DELETE FROM ${physicalTable} WHERE ${pkField} = $1`;
-        console.log(`Ejecutando Eliminar: ${sql} [${id}]`);
 
         await db.query(sql, [id]);
 
@@ -419,7 +535,7 @@ exports.executeScript = async (req, res) => {
         const { event } = req.params; // ej. 'sactivate'
         const contextParams = req.body || {}; // Parámetros que envíe el cliente (ej. id de fila)
 
-        const metadata = MetadataService.getFormMetadata(idform);
+        const metadata = await MetadataService.getFormMetadata(idform);
         if (!metadata) return res.status(404).json({ success: false, error: 'Módulo no existe' });
 
         // Evaluamos si el script está a nivel FORMS (ej. sactivate) o necesitamos buscar en grids
@@ -474,8 +590,8 @@ exports.saveInterface = async (req, res) => {
         try {
             for (const col of columns) {
                 await db.query(
-                    'UPDATE XFIELD SET ancho = $1, posicion = $2 WHERE idgrid = $3 AND campo = $4',
-                    [col.ancho, col.posicion, idgrid, col.campo]
+                    'UPDATE XFIELD SET ancho = $1, posicion = $2, oculto = $3 WHERE idgrid = $4 AND campo = $5',
+                    [col.ancho, col.posicion, col.oculto ? true : false, idgrid, col.campo]
                 );
             }
             await db.query('COMMIT');
@@ -490,6 +606,100 @@ exports.saveInterface = async (req, res) => {
         res.json({ success: true, message: 'Configuración de interfaz guardada correctamente' });
     } catch (error) {
         console.error('❌ Error al guardar interfaz:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+// ------------------------------------------------------------------------------------------------ //
+// EJECUTOR DE CONSULTAS SQL LIBRES (Solo SELECT)
+// ------------------------------------------------------------------------------------------------ //
+exports.runQuery = async (req, res) => {
+    try {
+        const { sql, params } = req.body;
+
+        if (!sql) {
+            return res.status(400).json({ success: false, error: 'No se proporcionó SQL' });
+        }
+
+        // Seguridad básica: Solo permitir SELECT
+        const trimmedSql = sql.trim().toUpperCase();
+        if (!trimmedSql.startsWith('SELECT')) {
+            return res.status(403).json({ success: false, error: 'Solo se permiten consultas de lectura (SELECT)' });
+        }
+
+        const result = await db.query(sql, params || []);
+        res.json({ success: true, data: result.rows });
+    } catch (error) {
+        console.error('❌ Error en runQuery:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+// ------------------------------------------------------------------------------------------------ //
+// EJECUTOR DE BÚSQUEDA INTERACTIVA DE COMBOS (TYPE-AHEAD)
+// ------------------------------------------------------------------------------------------------ //
+exports.searchComboData = async (req, res) => {
+    try {
+        const { idform, idgrid, campo } = req.params;
+        const { q } = req.query; // El término de búsqueda tippeado
+
+        const metadata = await MetadataService.getFormMetadata(idform);
+        const gridMeta = metadata?.grids?.find(g => g.idgrid === Number(idgrid));
+        const fieldMeta = gridMeta?.fields?.find(f => f.campo === campo);
+
+        if (!fieldMeta || !fieldMeta.sqlcombo) {
+            return res.status(404).json({ success: false, error: 'Configuración o sqlcombo no encontrado' });
+        }
+
+        let comboQuery = fieldMeta.sqlcombo.trim();
+        let comboParams = [];
+
+        if (comboQuery.toLowerCase().includes('return') && comboQuery.includes('wrapQuery')) {
+            const scriptResult = await ScriptingService.runScript(comboQuery, {
+                form: metadata.form,
+                grid: gridMeta,
+                field: fieldMeta
+            });
+
+            if (scriptResult && scriptResult.wrapQuery) {
+                comboQuery = scriptResult.wrapQuery;
+                comboParams = scriptResult.wrapParams || [];
+            } else {
+                return res.status(500).json({ success: false, error: 'El script retornó un wrapQuery inválido.' });
+            }
+        }
+
+        // Removemos cualquier límite hardcodeado anterior
+        const baseQuery = comboQuery.replace(/LIMIT\s+\d+/i, '');
+
+        // Sondeo rápido para detectar nombres de columnas originados
+        const probeRes = await db.query(`SELECT * FROM (${baseQuery}) as probe LIMIT 1`, comboParams);
+        if (probeRes.rows.length === 0) return res.json({ success: true, data: [] });
+
+        const keys = Object.keys(probeRes.rows[0]);
+        const colVal = keys[0];
+        const colLabel = keys.length > 1 ? keys[1] : keys[0];
+
+        let searchSql = '';
+        let params = [...comboParams];
+        if (q && q.trim() !== '') {
+            // Restaurar búsqueda secuencial estricta (ej: "cruz chavez" -> "%cruz%chavez%")
+            const searchPattern = `%${q.trim().replace(/\s+/g, '%')}%`;
+            searchSql = `SELECT * FROM (${baseQuery}) AS sub WHERE UPPER(CAST(sub."${colLabel}" AS TEXT)) LIKE UPPER($${params.length + 1}) LIMIT 100`;
+            params.push(searchPattern);
+        } else {
+            searchSql = `SELECT * FROM (${baseQuery}) AS sub LIMIT 100`;
+        }
+
+        const result = await db.query(searchSql, params);
+        const mappedData = result.rows.map(row => ({
+            value: String(row[colVal] || ''),
+            label: String(row[colLabel] || '')
+        }));
+
+        res.json({ success: true, data: mappedData });
+
+    } catch (error) {
+        console.error('❌ Error en searchComboData:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 };

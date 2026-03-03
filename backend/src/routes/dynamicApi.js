@@ -15,6 +15,7 @@ router.get('/meta/:idform', DynamicController.getFormDefinition);
 // 3.1 Obtener configuración global del sistema (shortcuts, etc)
 router.get('/sistema-config', DynamicController.getSistemaConfig);
 
+
 // 4. Obtener datos (registros físicos) de la VISTA (vquery) de una grilla específica
 router.get('/data/:idform/:idgrid', DynamicController.getGridData);
 
@@ -27,7 +28,13 @@ router.delete('/data/:idform/:idgrid/:id', DynamicController.deleteGridData);
 // 7. Guardar anchos y posiciones de columnas en XFIELD
 router.post('/save-interface', DynamicController.saveInterface);
 
+// 7.1 Ejecutar consulta libre (SELECT) para scripts dinámicos
+router.post('/run-query', DynamicController.runQuery);
+
 // 8. Descargar/Visualizar un reporte en PDF basado en XREPORTS
 router.get('/report/:idreport', ReportController.downloadReportPdf);
+
+// 9. Búsqueda interactiva de datos para los combo interactivos (type-ahead)
+router.get('/combo/:idform/:idgrid/:campo', DynamicController.searchComboData);
 
 module.exports = router;

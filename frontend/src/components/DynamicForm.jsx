@@ -1,15 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { Box, TextField, Button, Typography, Grid as MuiGrid, MenuItem, Checkbox, FormControlLabel, Paper } from '@mui/material';
-import { Save as SaveIcon, Close as CancelIcon } from '@mui/icons-material';
+import { Box, TextField, Button, Typography, Grid as MuiGrid, MenuItem, Checkbox, FormControlLabel, Paper, Autocomplete, IconButton, Tooltip } from '@mui/material';
+import { Save as SaveIcon, Close as CancelIcon, OpenInNew as OpenInNewIcon } from '@mui/icons-material';
 import * as Icons from '@mui/icons-material';
 import axios from 'axios';
+import { formatNumber, formatDate } from '../utils/formatters';
 import DynamicGrid from './DynamicGrid';
 import AlertDialog from './AlertDialog';
+import MemoEditorDialog from './MemoEditorDialog';
 
-const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode, uiStyles = {} }) => {
+const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode, uiStyles = {}, dispatchGridEvent }) => {
     const [formData, setFormData] = useState(record || {});
     const [alert, setAlert] = useState({ open: false, title: '', message: '', severity: 'error' });
     const [showValidationEffect, setShowValidationEffect] = useState(false);
+    const [focusedField, setFocusedField] = useState(null);
+    const [memoEditor, setMemoEditor] = useState({ open: false, campo: null, tipoMemo: 1, title: '' });
+
+    // Estados para búsqueda interactiva de combos (Type-Ahead)
+    const [asyncComboOptions, setAsyncComboOptions] = useState({}); // { campo: [{value, label}] }
+    const [comboLoading, setComboLoading] = useState({}); // { campo: boolean }
+    const comboFetchTimeout = React.useRef(null);
+    const comboRequestId = React.useRef({}); // { campo: number } - contador para descartar respuestas obsoletas
+
 
     // Extraer campos configurados para edición (eoculto = false)
     const editFields = (() => {
@@ -85,12 +96,20 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
 
     const handleChange = (campo, valor) => {
         let finalValue = valor;
-        if (gridMeta.mayusculas && typeof valor === 'string') {
+        const fieldMeta = editFields.find(f => f.campo === campo);
+
+        if (gridMeta.mayusculas && typeof valor === 'string' && fieldMeta?.tipod !== 'W') {
             finalValue = valor.toUpperCase();
         }
-        setFormData(prev => ({ ...prev, [campo]: finalValue }));
 
-        const fieldMeta = editFields.find(f => f.campo === campo);
+        setFormData(prev => {
+            const newState = { ...prev, [campo]: finalValue };
+            if (fieldMeta && fieldMeta.datafield && fieldMeta.datafield.trim() !== '') {
+                newState[fieldMeta.datafield.trim()] = finalValue;
+            }
+            return newState;
+        });
+
         if (fieldMeta && fieldMeta.svalida) {
             try {
                 const validateFunc = new Function('formData', 'setFormData', 'valor', fieldMeta.svalida);
@@ -99,6 +118,36 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                 console.error(`Error script svalida en ${campo}`, e);
             }
         }
+    };
+
+    const fetchRemoteOptions = async (campo, query = '') => {
+        if (!comboRequestId.current[campo]) comboRequestId.current[campo] = 0;
+        const thisRequest = ++comboRequestId.current[campo];
+
+        setAsyncComboOptions(prev => ({ ...prev, [campo]: [] })); // Limpiar (necesario para filtrar)
+        setComboLoading(prev => ({ ...prev, [campo]: true }));    // React bacha ambos → MUI muestra spinner
+        try {
+            const res = await axios.get(`/api/dynamic/combo/${idform}/${gridMeta.idgrid}/${campo}?q=${query}`);
+            // Solo aplicar si esta es la petición más reciente para este campo
+            if (thisRequest === comboRequestId.current[campo] && res.data.success) {
+                setAsyncComboOptions(prev => ({ ...prev, [campo]: res.data.data }));
+            }
+        } catch (error) {
+            if (thisRequest === comboRequestId.current[campo]) {
+                console.error(`Error fetching combo options for ${campo}:`, error);
+            }
+        } finally {
+            if (thisRequest === comboRequestId.current[campo]) {
+                setComboLoading(prev => ({ ...prev, [campo]: false }));
+            }
+        }
+    };
+
+    const handleComboSearch = (campo, query) => {
+        if (comboFetchTimeout.current) clearTimeout(comboFetchTimeout.current);
+        comboFetchTimeout.current = setTimeout(() => {
+            fetchRemoteOptions(campo, query);
+        }, 300);
     };
 
     const handleSave = async () => {
@@ -116,14 +165,17 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
             return;
         }
 
-        if (gridMeta.ssave) {
+        if (dispatchGridEvent) {
+            const continuable = await dispatchGridEvent('ssave', { record: formData });
+            if (!continuable) return;
+        } else if (gridMeta.ssave) {
             try {
                 const beforePost = new Function('formData', gridMeta.ssave);
                 const allow = beforePost(formData);
                 if (allow === false) return;
             } catch (error) {
                 // Silencioso o log mínimo en producción
-            } finally { }
+            }
         }
 
         try {
@@ -155,7 +207,9 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
             });
 
             if (res.data.success) {
-                if (gridMeta.ssavepost) {
+                if (dispatchGridEvent) {
+                    await dispatchGridEvent('ssavepost', { record: formData });
+                } else if (gridMeta.ssavepost) {
                     try {
                         const afterPost = new Function('formData', gridMeta.ssavepost);
                         afterPost(formData);
@@ -243,7 +297,8 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                             let value = formData[field.campo] ?? field.valxdefecto ?? '';
 
                             // Si el valor es un objeto (ej: jsonb de la base de datos), lo convertimos a string para el input
-                            if (value !== null && typeof value === 'object') {
+                            // PERO si es una instancia de Date de JS, la dejamos pasar para que el formateador de fecha lo maneje
+                            if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
                                 try {
                                     value = JSON.stringify(value, null, 2);
                                 } catch (e) {
@@ -254,37 +309,79 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                             let InputElement = null;
 
                             if (field.valcombo || field.sqlcombo) {
-                                let opciones = field.valcombo ? field.valcombo.split(',').map(v => v.trim()) : [];
+                                if (field.datafield && field.datafield.trim() !== '') {
+                                    value = formData[field.datafield.trim()] ?? value;
+                                }
+
+                                const isAsync = !!field.sqlcombo;
+                                const remoteOptions = asyncComboOptions[field.campo] || [];
+                                const staticOptions = field.comboDataList || (field.valcombo ? field.valcombo.split(',').map(v => ({ value: v.trim(), label: v.trim() })) : []);
+
+                                // Si es async, combinamos las opciones remotas con la opción seleccionada actual si no está en la lista
+                                let options = isAsync ? remoteOptions : staticOptions;
+
+                                // Asegurar que el valor actual (si existe) tenga una etiqueta en la lista para que Autocomplete no falle
+                                if (value !== '' && value !== null) {
+                                    const exists = options.find(o => String(o.value) === String(value));
+                                    if (!exists) {
+                                        // Intentar buscar el label en el mapeo global de metadata si está disponible
+                                        const label = field.comboDataKeyVal?.[String(value)] || value;
+                                        options = [{ value: String(value), label: String(label) }, ...options];
+                                    }
+                                }
+
                                 InputElement = (
-                                    <TextField
-                                        select fullWidth size="small"
+                                    <Autocomplete
+                                        fullWidth
+                                        size="small"
                                         id={`form-field-${field.campo}`}
-                                        label={field.titlefield || field.campo}
-                                        value={value}
-                                        onChange={(e) => handleChange(field.campo, e.target.value)}
-                                        onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
                                         disabled={field.readonly || field.locked || readonlyMode}
-                                        InputProps={{ style: { textTransform: gridMeta.mayusculas ? 'uppercase' : 'none' } }}
-                                        InputLabelProps={{ sx: field.obligatorio ? { color: 'maroon', '&.Mui-focused': { color: 'maroon' } } : {} }}
-                                        sx={{
-                                            '& .MuiOutlinedInput-root': {
-                                                '& fieldset': {
-                                                    borderColor: (field.obligatorio && (!value || value.toString().trim() === '')) ? 'maroon' : undefined,
-                                                    borderWidth: (field.obligatorio && (!value || value.toString().trim() === '')) ? '1.5px' : undefined,
-                                                },
-                                                animation: (showValidationEffect && field.obligatorio && (!value || value.toString().trim() === ''))
-                                                    ? 'validation-pulse 1s ease-in-out infinite' : 'none',
-                                                '@keyframes validation-pulse': {
-                                                    '0%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)', backgroundColor: 'transparent' },
-                                                    '50%': { boxShadow: '0 0 20px maroon', filter: 'blur(1.5px)', backgroundColor: 'rgba(128, 0, 0, 0.08)' },
-                                                    '100%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)', backgroundColor: 'transparent' }
-                                                }
+                                        options={options}
+                                        filterOptions={(x) => x} // <--- IMPORTANTE: Deshabilita el filtro de React (usamos solo el del servidor)
+                                        loading={comboLoading[field.campo] || false}
+                                        loadingText="Buscando..."
+                                        autoComplete={false} // Evita sugerencias raras del navegador
+                                        clearOnBlur={false} // Evita que se borre lo que escribimos al salir
+                                        value={options.find(o => String(o.value) === String(value)) || null}
+                                        onChange={(e, newValue) => {
+                                            handleChange(field.campo, newValue ? newValue.value : '');
+                                        }}
+                                        onInputChange={(e, newInputValue, reason) => {
+                                            if (isAsync && (reason === 'input' || (reason === 'clear' && newInputValue === ''))) {
+                                                handleComboSearch(field.campo, newInputValue);
                                             }
                                         }}
-                                    >
-                                        {opciones.map(opt => <MenuItem key={opt} value={opt}>{opt}</MenuItem>)}
-                                    </TextField>
+                                        getOptionLabel={(option) => {
+                                            if (typeof option === 'string') return option;
+                                            return option.label || '';
+                                        }}
+                                        isOptionEqualToValue={(option, val) => String(option.value) === String(val.value)}
+                                        onOpen={() => {
+                                            if (isAsync && options.length <= 1) {
+                                                fetchRemoteOptions(field.campo, '');
+                                            }
+                                        }}
+                                        renderInput={(params) => (
+                                            <TextField
+                                                {...params}
+                                                label={field.titlefield || field.campo}
+                                                onFocus={(e) => e.target.select()}
+                                                InputLabelProps={{ sx: field.obligatorio ? { color: 'maroon', '&.Mui-focused': { color: 'maroon' } } : {} }}
+                                                sx={{
+                                                    '& .MuiOutlinedInput-root': {
+                                                        '& fieldset': {
+                                                            borderColor: (field.obligatorio && (!value || value.toString().trim() === '')) ? 'maroon' : undefined,
+                                                            borderWidth: (field.obligatorio && (!value || value.toString().trim() === '')) ? '1.5px' : undefined,
+                                                        },
+                                                        animation: (showValidationEffect && field.obligatorio && (!value || value.toString().trim() === ''))
+                                                            ? 'validation-pulse 1s ease-in-out infinite' : 'none'
+                                                    }
+                                                }}
+                                            />
+                                        )}
+                                    />
                                 );
+                            } else if (field.tipod === 'B') {
                             } else if (field.tipod === 'B') {
                                 InputElement = (
                                     <FormControlLabel
@@ -308,47 +405,73 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                                     />
                                 );
                             } else if (field.tipod === 'W') {
+                                const tipoMemo = field.tipomemo || 1;
                                 InputElement = (
-                                    <TextField
-                                        fullWidth multiline rows={field.altomemo || 3}
-                                        id={`form-field-${field.campo}`}
-                                        label={field.titlefield || field.campo}
-                                        value={value}
-                                        onChange={(e) => handleChange(field.campo, e.target.value)}
-                                        onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
-                                        disabled={field.readonly || field.locked || readonlyMode}
-                                        InputProps={{ style: { textTransform: gridMeta.mayusculas ? 'uppercase' : 'none' } }}
-                                        InputLabelProps={{ sx: field.obligatorio ? { color: 'maroon', '&.Mui-focused': { color: 'maroon' } } : {} }}
-                                        sx={{
-                                            '& .MuiInputBase-root': {
-                                                alignItems: 'flex-start',
-                                                borderColor: (field.obligatorio && (!value || value.toString().trim() === '')) ? 'maroon' : undefined,
-                                                '& fieldset': {
+                                    <Box sx={{ position: 'relative' }}>
+                                        <TextField
+                                            fullWidth multiline rows={field.altomemo || 3}
+                                            id={`form-field-${field.campo}`}
+                                            label={field.titlefield || field.campo}
+                                            value={value}
+                                            onFocus={(e) => e.target.select()}
+                                            onChange={(e) => handleChange(field.campo, e.target.value)}
+                                            onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
+                                            disabled={field.readonly || field.locked || readonlyMode}
+                                            InputProps={{ style: { textTransform: gridMeta.mayusculas ? 'uppercase' : 'none' } }}
+                                            InputLabelProps={{ sx: field.obligatorio ? { color: 'maroon', '&.Mui-focused': { color: 'maroon' } } : {} }}
+                                            sx={{
+                                                '& .MuiInputBase-root': {
+                                                    alignItems: 'flex-start',
                                                     borderColor: (field.obligatorio && (!value || value.toString().trim() === '')) ? 'maroon' : undefined,
-                                                    borderWidth: (field.obligatorio && (!value || value.toString().trim() === '')) ? '1.5px' : undefined,
-                                                },
-                                                animation: (showValidationEffect && field.obligatorio && (!value || value.toString().trim() === ''))
-                                                    ? 'validation-pulse 1s ease-in-out infinite' : 'none',
-                                                '@keyframes validation-pulse': {
-                                                    '0%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)', backgroundColor: 'transparent' },
-                                                    '50%': { boxShadow: '0 0 20px maroon', filter: 'blur(1.5px)', backgroundColor: 'rgba(128, 0, 0, 0.08)' },
-                                                    '100%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)', backgroundColor: 'transparent' }
-                                                },
-                                                '& textarea': {
-                                                    resize: 'vertical',
-                                                    overflow: 'auto !important'
+                                                    '& fieldset': {
+                                                        borderColor: (field.obligatorio && (!value || value.toString().trim() === '')) ? 'maroon' : undefined,
+                                                        borderWidth: (field.obligatorio && (!value || value.toString().trim() === '')) ? '1.5px' : undefined,
+                                                    },
+                                                    animation: (showValidationEffect && field.obligatorio && (!value || value.toString().trim() === ''))
+                                                        ? 'validation-pulse 1s ease-in-out infinite' : 'none',
+                                                    '@keyframes validation-pulse': {
+                                                        '0%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)', backgroundColor: 'transparent' },
+                                                        '50%': { boxShadow: '0 0 20px maroon', filter: 'blur(1.5px)', backgroundColor: 'rgba(128, 0, 0, 0.08)' },
+                                                        '100%': { boxShadow: '0 0 0px maroon', filter: 'blur(0px)', backgroundColor: 'transparent' }
+                                                    },
+                                                    '& textarea': {
+                                                        resize: 'vertical',
+                                                        overflow: 'auto !important'
+                                                    }
                                                 }
-                                            }
-                                        }}
-                                    />
+                                            }}
+                                        />
+                                        {tipoMemo > 0 && !readonlyMode && !field.readonly && !field.locked && (
+                                            <Tooltip title={tipoMemo === 1 ? 'Editor de texto' : tipoMemo === 2 ? 'Editor de código' : 'Editor visual'}>
+                                                <IconButton
+                                                    size="small"
+                                                    onClick={() => setMemoEditor({ open: true, campo: field.campo, tipoMemo, title: field.titlefield || field.campo })}
+                                                    sx={{
+                                                        position: 'absolute',
+                                                        top: 4,
+                                                        right: 4,
+                                                        backgroundColor: 'rgba(25, 118, 210, 0.08)',
+                                                        '&:hover': { backgroundColor: 'rgba(25, 118, 210, 0.2)' },
+                                                        zIndex: 1
+                                                    }}
+                                                >
+                                                    <OpenInNewIcon sx={{ fontSize: 16 }} />
+                                                </IconButton>
+                                            </Tooltip>
+                                        )}
+                                    </Box>
                                 );
                             } else if (field.tipod === 'D') {
+                                // Asegurar que el valor esté en formato YYYY-MM-DD para el input type="date"
+                                const dateValue = formatDate(value, 'YYYY-MM-DD');
+
                                 InputElement = (
                                     <TextField
                                         fullWidth size="small" type="date"
                                         id={`form-field-${field.campo}`}
                                         label={field.titlefield || field.campo}
-                                        value={value}
+                                        value={dateValue}
+                                        onFocus={(e) => e.target.select()}
                                         onChange={(e) => handleChange(field.campo, e.target.value)}
                                         onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
                                         disabled={field.readonly || field.locked || readonlyMode}
@@ -382,6 +505,7 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                                             id={`form-field-${field.campo}`}
                                             label={field.titlefield || field.campo}
                                             value={value}
+                                            onFocus={(e) => e.target.select()}
                                             onChange={(e) => handleChange(field.campo, e.target.value)}
                                             onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
                                             disabled={field.readonly || field.locked || readonlyMode}
@@ -406,14 +530,29 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                                     </Box>
                                 );
                             } else {
+                                const isNumeric = field.tipod === 'I' || field.tipod === 'F';
+                                const displayValue = (isNumeric && focusedField !== field.campo)
+                                    ? formatNumber(value, field.formato, field.tipod === 'F')
+                                    : value;
+
                                 InputElement = (
                                     <TextField
                                         fullWidth size="small"
                                         id={`form-field-${field.campo}`}
-                                        type={field.tipod === 'I' || field.tipod === 'F' ? 'number' : 'text'}
+                                        type="text" // Usamos text para permitir prefijos/sufijos y formato
                                         label={field.titlefield || field.campo}
-                                        value={value}
-                                        onChange={(e) => handleChange(field.campo, e.target.value)}
+                                        value={displayValue}
+                                        onFocus={(e) => {
+                                            if (isNumeric) setFocusedField(field.campo);
+                                            e.target.select();
+                                        }}
+                                        onBlur={() => isNumeric && setFocusedField(null)}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            // Si es numerico, solo permitir números, puntos y comas mientras edita (si se desea ser estricto)
+                                            // Por ahora mantenemos elasticidad
+                                            handleChange(field.campo, val);
+                                        }}
                                         onKeyDown={(e) => handleKeyDown(e, editFields.indexOf(field))}
                                         disabled={field.readonly || field.locked || readonlyMode}
                                         InputProps={{ style: { textTransform: gridMeta.mayusculas ? 'uppercase' : 'none' } }}
@@ -473,6 +612,18 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                         setTimeout(() => setShowValidationEffect(false), 2200);
                     }
                 }}
+            />
+
+            <MemoEditorDialog
+                open={memoEditor.open}
+                onClose={() => setMemoEditor({ ...memoEditor, open: false })}
+                onAccept={(content) => {
+                    handleChange(memoEditor.campo, content);
+                    setMemoEditor({ ...memoEditor, open: false });
+                }}
+                initialValue={formData[memoEditor.campo] || ''}
+                tipoMemo={memoEditor.tipoMemo}
+                fieldTitle={memoEditor.title}
             />
         </Paper>
     );

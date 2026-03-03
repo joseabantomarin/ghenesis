@@ -1,0 +1,8 @@
+node_modules
+.env
+tmp
+*~
+*.log
+dist
+.DS_Store
+.vite

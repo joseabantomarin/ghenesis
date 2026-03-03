@@ -120,36 +120,13 @@ locked. Cuando quiero que este bloqueado para edicion (es parecido a readonly) s
 listfield. Lista de campos a mostrar, segun los xtable que veremos mas adelante.
 xdataset. el nombre del dataset definido en los xtable (ver mas adelante)
 obligatorio. Campo logocio con el cual indico si el llenado de un campo es obligatorio, Cuando no se llena se pinta de color rojo en el formulario de edicion.
-sqlcombo. Es un sql directo que me permite obtener una lista desde la bd, por ejemplo, para el campo ciudad: "select nombre_ciudad from tciudades". Esto crea un campo unicombobox automaticamente
+sqlcombo. Es un script o sql directo que me permite obtener una lista desde la bd, por ejemplo, para el campo ciudad: "select nombre_ciudad from tciudades". Esto crea un campo unicombobox automaticamente
 f9. Su valor string indica el nombre de algun xform que se abre al dar click en la lupa que se crea automaticaente en el campo, de esa manera puedo abrir otro form desde el campo, para no tener que cerrar y abrir modulos innecesariamente
 noimport. Tengo programado un modulo que automaticamente hace importacion/exportacion de datos de la grilla a excel. este campo me sirve para indicar si no considera a este campo en el proceso
 vunique. Valor logico para indicar si el campo es de valor unico como un dni, de esa forma al momento de guardar me advierte si se estan duplicando datos en esa columna
 altomemo. En el formulario de edicion me permite darle personalizacion para ver en diferentes altos los campo memo que por defectotiene 3 lineas
 agregar. Cuando es true, en el formulario de edicion aparece el edit con un boton + (para agregar)
 noanymatch. Valor logico que lo uso para busquedas exactas en un combobox.
-upduser. campo de actualizacion user
-upddate. campo de actualizacion date
-updtype. campo de actualizacion type
-
-
-XCONTROLS (creacion dinamica de controles)
-Idcontrol. Identificador unico
-idform. formulario o modulo con el que se relaciona. Los controles lo relaciono con TODO el form porque los xgrid tambien se crean dentro
-nombre. nombre string del control
-tipo. Tipo de control dinamico: "PANEL", "BUTTON", "EDIT", "COMBOBOX", "LABEL", "MEMO"
-texto. Texto del caption en caso de corresponder, por ejemplo caption para el button o fieldlabel para el edit
-codigo1, codigo script principal que se ejecuta segun el tipo de control u objeto, por ejemplo en el caso de un boton, es onclick
-codigo2, codigo script secundario que se ejecuta segun el tipo de control u objeto, por ejemplo en el caso de un edit codigo1 es codigo al entrar y codigo2 es codigo al dar enter
-donde. Objeto o componente donde se muestra el control, para ello tengo un mapa de ubicaciones de mi formulario principal: panel_superior, panel_inferior, barra_de_herramientas, panel de edicion, etc.
-alinear. Donde se alinea el control (align)
-ancho. ancho del control
-memo
-icon. Valor relacionado con mi tabla de iconos (fontawsome) para mostrarlo sobre todo en los botones
-Result. Valor logico que lo uso para saber si se cierra en caso de estar abierto en un formulario modal.
-xdataset. Nombre de la tabla xtable (ver mas adelante) para llenar el control con datos automaticamente.
-datafield. Campo que se evalua cada vez que se elige en el control xdataset.
-nrocontrol. Lo uso para manejar el orden en el que se crean los controles.
-vdefault. Valor por defecto que carga sobre todo si el control es tuniedit o tunimemo.
 upduser. campo de actualizacion user
 upddate. campo de actualizacion date
 updtype. campo de actualizacion type
@@ -166,19 +143,10 @@ Title. Titulo del reporte (el que va a ir en la hoja)
 consulta. Consulta o query que puede definirse
 Rformato. Formato Fr3 en el que fastreport guarda el reporte diseñado (normalmente esto lo diseño con una aplicación de escritorio creada para ese fin)
 
-
-XTABLE. Es una tabla donde defino consultas para ser llamados por los combobox, que puede ser desde el form de edicion o desde un control. Todos estos xtable se cargan al inicio de entrar al programa para estar disponibles (salvo que me sugieras algo mejor)
-Idtable. identificador unico
-Nombre_table. Nombre que es el que se pone para relacionar con los fields y controls.
-MyQuery. Query que se utiliza para crear el xtable, siempre lleva por defecto un primer campo que es el id y otras columnas opcionales, por ejemplo select idciudad, descripcion, pais from ciudades
-upduser. campo de actualizacion user
-upddate. campo de actualizacion date
-updtype. campo de actualizacion type
-
-Por otro lado tengo estas itras tablas:
+## Otras tablas
+Por otro lado tengo estas otras tablas:
 XSISTEMA. Para configurar el nombre de la aplicación, el icono que se muestra en la web, los iconos para las categorias general, operaciones, reportes, config, system; un codigo inicial al hacer login
-XEXPLORER	Es donde guardo los archivos o files que sube el usuario, ya que a cualquier nivel de registro es posible adjuntar files, talvez esto es un poco peligroso o abrumador, dame sugerencias.
-XCONSULTS	Definición de consultas SQL reutilizables, filtros dinámicos, queries paramétricos
+XEXPLORER	Es donde guardo el nombre de los archivos o files que sube el usuario, ya que a cualquier nivel de registro es posible adjuntar files, talvez esto es un poco peligroso o abrumador, dame sugerencias.
 XFUNCTIONS	Scripts generales, funciones del engine, librerías personalizadas
 XIDIOMA	Diccionario multilenguaje para traducciones dinámicas (estilo i18n)
 XAUDIT	Registro detallado de cambios, antes/después, auditoría avanzada
