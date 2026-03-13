@@ -9,13 +9,17 @@ import PersonIcon from '@mui/icons-material/Person';
 import HomeIcon from '@mui/icons-material/Home';
 import ArticleIcon from '@mui/icons-material/Article';
 import * as Icons from '@mui/icons-material';
+import { useLocation } from 'react-router-dom';
 import { useMetadata } from './context/MetadataContext';
 import { useAuth } from './context/AuthContext';
+import { useSystem } from './context/SystemContext';
 import DynamicMenu from './components/DynamicMenu';
 import DynamicView from './components/DynamicView';
 import UserManager from './components/UserManager';
 import RoleManager from './components/RoleManager';
 import Login from './components/Login';
+import ResetPassword from './components/ResetPassword';
+import ChangePassword from './components/ChangePassword';
 import './theme.css'; // Importando Tema Global
 
 const drawerWidth = 310;
@@ -47,7 +51,9 @@ const getIcon = (iconName, DefaultIcon = ArticleIcon) => {
 function App() {
     const { loading: authLoading, token, user, logout } = useAuth();
     const { loadingMenu } = useMetadata();
+    const { sistemaConfig, loading: systemLoading } = useSystem();
     const isMobile = useMediaQuery('(max-width:690px)'); // Detectar pantalla móvil
+    const location = useLocation(); // Hook para saber en qué URL estamos
     // Por defecto ocultar menú en móviles, mostrar en PC
     const [drawerOpen, setDrawerOpen] = useState(!isMobile);
 
@@ -55,13 +61,16 @@ function App() {
     const [tabs, setTabs] = useState([{ id: 'home', title: 'Home', type: 'home', icon: 'Home' }]);
     const [activeTab, setActiveTab] = useState('home');
 
-    // Resetear pestañas al cerrar sesión
+    // Resetear pestañas al cerrar sesión o actualizar icono de Home
     useEffect(() => {
         if (!token) {
-            setTabs([{ id: 'home', title: 'Home', type: 'home', icon: 'Home' }]);
+            setTabs([{ id: 'home', title: 'Home', type: 'home', icon: sistemaConfig?.icono || 'Home' }]);
             setActiveTab('home');
+        } else {
+            // Actualizar solo el icono del Home si cambia en la BD
+            setTabs(prev => prev.map(t => t.id === 'home' ? { ...t, icon: sistemaConfig?.icono || 'Home' } : t));
         }
-    }, [token]);
+    }, [token, sistemaConfig?.icono]);
 
     // Menú de usuario (dropdown)
     const [userMenuAnchor, setUserMenuAnchor] = useState(null);
@@ -112,12 +121,16 @@ function App() {
     };
 
     // --- Auth gates ---
-    if (authLoading) {
+    if (authLoading || systemLoading) {
         return (
             <Box sx={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', bgcolor: '#f5f5f5' }}>
                 <CircularProgress />
             </Box>
         );
+    }
+
+    if (location.pathname === '/reset-password') {
+        return <ResetPassword />;
     }
 
     if (!token || !user) {
@@ -162,7 +175,7 @@ function App() {
                         <MenuIcon />
                     </IconButton>
                     <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
-                        Ghenesis - Framework Web
+                        {sistemaConfig?.titulo || 'Ghenesis - Framework Web'}
                     </Typography>
 
                     {/* --- User Info (arriba a la derecha) --- */}
@@ -246,7 +259,7 @@ function App() {
                             <Box>
                                 <Typography variant="body2">About</Typography>
                                 <Typography variant="caption" color="text.secondary">
-                                    Ghenesis Framework v1.0
+                                    {sistemaConfig?.titulo || 'Ghenesis Framework'} v1.0
                                 </Typography>
                             </Box>
                         </MenuItem>
@@ -351,7 +364,7 @@ function App() {
                                 }}
                                 label={
                                     <Box sx={{ display: 'flex', alignItems: 'center', textTransform: 'none', gap: 0.5 }}>
-                                        {getIcon(tab.icon, { fontSize: '0.95rem' })}
+                                        {getIcon(tab.icon)}
                                         <Typography sx={{ fontSize: 'inherit', fontWeight: 'inherit', letterSpacing: 'inherit' }}>
                                             {tab.title}
                                         </Typography>
@@ -374,8 +387,8 @@ function App() {
                             {tab.type === 'home' ? (
                                 <Box sx={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center' }}>
                                     <img
-                                        src="https://images.unsplash.com/photo-1497215728101-856f4ea42174?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80"
-                                        alt="Fondo de Sistema"
+                                        src={(isMobile && sistemaConfig?.imagen_movil) ? sistemaConfig.imagen_movil : (sistemaConfig?.imagen || 'https://images.unsplash.com/photo-1497215728101-856f4ea42174?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80')}
+                                        alt={sistemaConfig?.titulo || 'Fondo de Sistema'}
                                         style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '8px' }}
                                     />
                                 </Box>
@@ -383,6 +396,8 @@ function App() {
                                 <UserManager />
                             ) : tab.type === 'roles' ? (
                                 <RoleManager />
+                            ) : tab.type === 'change-password' ? (
+                                <ChangePassword />
                             ) : (
                                 <DynamicView idform={tab.idform || tab.id} />
                             )}

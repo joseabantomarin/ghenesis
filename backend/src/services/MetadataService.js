@@ -181,8 +181,14 @@ class MetadataService {
         return Object.values(this.cache.forms).sort((a, b) => a.nroform - b.nroform);
     }
     // Obtener configuración global del sistema
-    async getSistemaConfig() {
-        if (!this.isLoaded) await this.initCache();
+    async getSistemaConfig(fresh = false) {
+        if (fresh) {
+            const res = await db.query('SELECT * FROM XSISTEMA LIMIT 1');
+            if (res.rows.length > 0) {
+                this.cache.sistema = res.rows[0];
+            }
+        }
+        if (!this.isLoaded && !fresh) await this.initCache();
         return this.cache.sistema || {};
     }
 }

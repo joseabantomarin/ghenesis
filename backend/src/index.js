@@ -41,6 +41,17 @@ db.query('SELECT NOW()')
 
 // Rutas
 app.use('/api/auth', authRoutes);
+
+// Ruta PÚBLICA para configuración del sistema (Login necesita leer esto sin auth)
+app.get('/api/sistema-config', async (req, res) => {
+    try {
+        const config = await MetadataService.getSistemaConfig(true);
+        res.json({ success: true, data: config });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.use('/api/dynamic', authMiddleware, dynamicApiRoutes);
 
 // Endpoint de prueba

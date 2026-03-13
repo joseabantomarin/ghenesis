@@ -178,26 +178,50 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
     const [uiStyles, setUiStyles] = useState({});
     const [contextMenu, setContextMenu] = useState(null);
     const [isConfirmingExport, setIsConfirmingExport] = useState(false);
+    const [showDeleted, setShowDeleted] = useState(false);
 
     // Refs para coordinación de navegación y guardado
     const pendingMove = useRef(null);
     const isSaving = useRef(false);
-
     // --- Helper Memos y Callbacks (Definidos antes de ser usados en effects) ---
     const isDeveloper = useMemo(() => {
         const role = user?.role?.toUpperCase() || '';
         return role === 'DEVELOPER' || role === 'PROGRAMADOR';
     }, [user]);
 
+    const detectPK = useMemo(() => {
+        return (record) => {
+            if (!record) return null;
+            // 1. Check metadata pk flag
+            let pkField = (gridMeta.fields || []).find(f => f.pk === true)?.campo;
+            if (pkField && record[pkField] !== undefined) return pkField;
+
+            // 2. Fallback to common patterns if no pk flag
+            const vquery = (gridMeta.vquery || '').toLowerCase();
+            const tableName = vquery.replace(/^x/, '').replace(/s$/, '');
+            const candidates = [`id${vquery}`, `id${tableName}`, 'id'];
+            pkField = Object.keys(record).find(k => candidates.includes(k.toLowerCase()));
+            if (pkField) return pkField;
+
+            // 3. Fallback to system IDs (pkHierarchy)
+            const pkHierarchy = ['idfield', 'idcontrol', 'idgrid', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'iduser', 'idrole', 'idacademia', 'idcurso', 'idform', 'idsistema', 'id'];
+            pkField = Object.keys(record).find(k => pkHierarchy.includes(k.toLowerCase()));
+            if (pkField) return pkField;
+
+            // 4. Ultimate fallback to first 'id' prefix
+            pkField = Object.keys(record).find(k => k.toLowerCase().startsWith('id'));
+            return pkField || Object.keys(record)[0]; // Último recurso: primer campo
+        };
+    }, [gridMeta.fields, gridMeta.vquery]);
+
     const getRowId = useMemo(() => {
         return (params) => {
             const d = params.data;
             if (!d) return Math.random().toString();
-            const pkHierarchy = ['idfield', 'idcontrol', 'idgrid', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'iduser', 'idrole', 'idacademia', 'idcurso', 'idform', 'idsistema', 'id'];
-            const pk = pkHierarchy.find(key => d[key] !== undefined);
-            return pk ? String(d[pk]) : String(d.id || Math.random());
+            const pkField = detectPK(d);
+            return pkField && d[pkField] !== undefined ? String(d[pkField]) : String(d.id || Math.random().toString());
         };
-    }, []);
+    }, [detectPK]);
 
     const fetchData = React.useCallback(async (silent = false) => {
         if (gridMeta.gparent && !masterRecord) {
@@ -214,6 +238,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                 ...(sortField && { sortField, sortOrder }),
                 ...(gridFilters && { filters: JSON.stringify(gridFilters) }),
                 ...(searchText && { search: searchText }),
+                showDeleted: showDeleted,
                 ...extraParams
             };
 
@@ -242,7 +267,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
             if (!silent) setLoading(false);
             isSaving.current = false;
         }
-    }, [idform, gridMeta, page, rowsPerPage, sortField, sortOrder, gridFilters, searchText, extraParams, masterRecord]);
+    }, [idform, gridMeta, page, rowsPerPage, sortField, sortOrder, gridFilters, searchText, extraParams, masterRecord, showDeleted]);
 
     // Cargar datos al montar y cuando cambien sus dependencias estables
     useEffect(() => {
@@ -267,6 +292,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                             setLabel: (key, value) => setUiStyles(prev => ({ ...prev, [key]: { ...prev[key], label: value } })),
                             setStyle: (key, style) => setUiStyles(prev => ({ ...prev, [key]: { ...prev[key], ...style } })),
                             refresh: () => fetchData(),
+                            reporte: (idreport) => window.dispatchEvent(new CustomEvent('open-report', { detail: idreport })),
                             setSearch: (text) => {
                                 setSearchText(text);
                                 setPage(0);
@@ -338,6 +364,13 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
     const openMenu = Boolean(anchorEl);
     const handleMenuClick = (event) => setAnchorEl(event.currentTarget);
     const handleMenuClose = () => setAnchorEl(null);
+
+    const handleToggleDeleted = () => {
+        const newState = !showDeleted;
+        setShowDeleted(newState);
+        setPage(0);
+        handleMenuClose();
+    };
 
     const handleContextMenu = (event) => {
         event.preventDefault();
@@ -426,7 +459,20 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
             });
         }
 
-        const defs = [];
+        const defs = [
+            {
+                width: 50,
+                pinned: 'left',
+                sortable: false,
+                resizable: false,
+                headerCheckboxSelection: true,
+                checkboxSelection: true,
+                suppressMenu: true,
+                suppressMovable: true,
+                lockPosition: 'left',
+                cellStyle: { display: 'flex', alignItems: 'center', justifyContent: 'center' }
+            }
+        ];
         let currentGroup = null;
 
         fields.forEach(f => {
@@ -553,7 +599,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                     // De lo contrario, seguir la lógica normal del componente
                     return !simplified && !readonlyMode;
                 },
-                filter: (!f.calculado && !simplified),
+                filter: (f.tipod === 'I' || f.tipod === 'F') ? 'agNumberColumnFilter' : (!f.calculado && !simplified),
                 filterValueGetter: (params) => {
                     const val = params.data?.[f.campo];
                     if (f.comboDataKeyVal && val !== undefined && f.comboDataKeyVal[String(val)]) {
@@ -563,9 +609,29 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                     if (f.tipod === 'D') {
                         return formatDate(val, f.formato);
                     }
-                    return val;
+                    // Para números, asegurar que devolvemos un Number para que el filtro local sea preciso
+                    return (f.tipod === 'I' || f.tipod === 'F') ? (val !== null ? Number(val) : null) : val;
                 },
-                filterParams: f.tipod === 'D' ? {} : undefined,
+                filterParams: (f.tipod === 'I' || f.tipod === 'F') ? {
+                    filterOptions: [
+                        {
+                            displayKey: 'equals',
+                            displayName: 'Igual a',
+                            predicate: ([filterValue], cellValue) => {
+                                if (filterValue == null || cellValue == null) return filterValue === cellValue;
+                                // Si el filtro no tiene decimales, comparamos solo la parte entera (Smart Search)
+                                const hasDecimals = String(filterValue).includes('.') || String(filterValue).includes(',');
+                                if (!hasDecimals) {
+                                    return Math.trunc(cellValue) === Math.trunc(filterValue);
+                                }
+                                // Si tiene decimales, comparación exacta
+                                return cellValue === filterValue;
+                            },
+                            numberOfInputs: 1
+                        },
+                        'notEqual', 'lessThan', 'lessThanOrEqual', 'greaterThan', 'greaterThanOrEqual', 'inRange'
+                    ]
+                } : (f.tipod === 'D' ? {} : undefined),
                 sortable: !f.calculado && !simplified,
                 comparator: (valueA, valueB, nodeA, nodeB) => {
                     let labelA = String(valueA || '');
@@ -874,6 +940,66 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
         setPage(0);
     };
 
+    const handleRestoreRecord = async () => {
+        const selectedNodes = gridRef.current?.api?.getSelectedNodes();
+        if (!selectedNodes || selectedNodes.length === 0) return;
+
+        const ids = selectedNodes.map(node => {
+            const pkField = detectPK(node.data);
+            return node.data[pkField];
+        }).filter(id => id !== undefined && id !== null);
+
+        if (ids.length === 0) return;
+
+        try {
+            const res = await axios.post(`/api/dynamic/data-restore/${idform}/${gridMeta.idgrid}/${ids.join(',')}`);
+            if (res.data.success) {
+                setAlertConfig({
+                    open: true,
+                    title: 'Restaurado',
+                    message: ids.length > 1 ? `${ids.length} registros restaurados exitosamente` : 'Registro restaurado exitosamente',
+                    severity: 'success'
+                });
+                fetchData();
+            }
+        } catch (e) {
+            setAlertConfig({ open: true, title: 'Error', message: 'No se pudo restaurar: ' + (e.response?.data?.error || e.message), severity: 'error' });
+        }
+    };
+
+    const handlePermanentDelete = async () => {
+        const selectedNodes = gridRef.current?.api?.getSelectedNodes();
+        if (!selectedNodes || selectedNodes.length === 0) return;
+
+        const ids = selectedNodes.map(node => {
+            const pkField = detectPK(node.data);
+            return node.data[pkField];
+        }).filter(id => id !== undefined && id !== null);
+
+        if (ids.length === 0) return;
+
+        const msg = ids.length > 1
+            ? `¿Está ABSOLUTAMENTE SEGURO de eliminar estos ${ids.length} registros permanentemente? Esta acción NO SE PUEDE DESHACER.`
+            : '¿Está ABSOLUTAMENTE SEGURO de eliminar este registro permanentemente? Esta acción NO SE PUEDE DESHACER.';
+
+        if (!window.confirm(msg)) return;
+
+        try {
+            const res = await axios.delete(`/api/dynamic/data-permanent/${idform}/${gridMeta.idgrid}/${ids.join(',')}`);
+            if (res.data.success) {
+                setAlertConfig({
+                    open: true,
+                    title: 'Eliminado',
+                    message: ids.length > 1 ? `${ids.length} registros eliminados físicamente` : 'Registro eliminado físicamente del sistema',
+                    severity: 'success'
+                });
+                fetchData();
+            }
+        } catch (e) {
+            setAlertConfig({ open: true, title: 'Error', message: 'No se pudo eliminar permanentemente: ' + (e.response?.data?.error || e.message), severity: 'error' });
+        }
+    };
+
     const dispatchGridEvent = async (eventName, eventData = {}) => {
         const scriptCode = gridMeta[eventName];
         if (!scriptCode || scriptCode.trim() === '') return true; // Continúa el ciclo si no hay script
@@ -893,6 +1019,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                         setLabel: (key, value) => setUiStyles(prev => ({ ...prev, [key]: { ...prev[key], label: value } })),
                         setStyle: (key, style) => setUiStyles(prev => ({ ...prev, [key]: { ...prev[key], ...style } })),
                         refresh: () => fetchData(true),
+                        reporte: (idreport) => window.dispatchEvent(new CustomEvent('open-report', { detail: idreport })),
                         setSearch: (text) => {
                             setSearchText(text);
                             setPage(0);
@@ -982,32 +1109,49 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
     };
 
     const handleDeleteSelected = () => {
-        if (!selectedRecord) return;
+        const selectedNodes = gridRef.current?.api?.getSelectedNodes();
+        if (!selectedNodes || selectedNodes.length === 0) return;
         setIsDeleting(true);
     };
 
     const executeDelete = async () => {
         setIsDeleting(false);
 
+        const selectedNodes = gridRef.current?.api?.getSelectedNodes();
+        if (!selectedNodes || selectedNodes.length === 0) return;
+
         // Fase 1: BEFORE DELETE (Puede Abortar)
-        const continuable = await dispatchGridEvent('sdelete');
+        // Nota: El evento sdelete normalmente opera sobre la fila enfocada,
+        // para masivos podríamos disparar uno por uno o pasar la lista.
+        // Por compatibilidad con scripts existentes, pasamos el primer record o el array.
+        const continuable = await dispatchGridEvent('sdelete', {
+            records: selectedNodes.map(n => n.data),
+            record: selectedNodes[0].data
+        });
         if (!continuable) return;
 
-        let pkField = Object.keys(selectedRecord).find(k => k.startsWith('id') || k.endsWith('id'));
-        if (!pkField) pkField = Object.keys(selectedRecord)[0];
-        const id = selectedRecord[pkField];
+        const ids = selectedNodes.map(node => {
+            const pkField = detectPK(node.data);
+            return node.data[pkField];
+        }).filter(id => id !== undefined && id !== null);
+
+        if (ids.length === 0) return;
 
         try {
-            const res = await axios.delete(`/api/dynamic/data/${idform}/${gridMeta.idgrid}/${id}`);
+            const res = await axios.delete(`/api/dynamic/data/${idform}/${gridMeta.idgrid}/${ids.join(',')}`);
             if (res.data.success) {
                 // Fase 2: AFTER DELETE (Post exito)
-                await dispatchGridEvent('sdeletepost');
+                await dispatchGridEvent('sdeletepost', {
+                    records: selectedNodes.map(n => n.data),
+                    count: ids.length
+                });
                 fetchData();
             } else {
                 alert('Error al eliminar: ' + res.data.error);
             }
         } catch (error) {
-            // Error de red o servidor
+            console.error('Error en executeDelete:', error);
+            alert('Excepción al intentar eliminar registros');
         }
     };
 
@@ -1122,19 +1266,11 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
             }
         }
 
-        // Identificar PK basándonos en la lógica comprobada de DynamicForm
-        let pkField = (gridMeta.fields || []).find(f => f.pk === true)?.campo;
+        // Identificar PK basándonos en la lógica comprobada (usando helper)
+        const pkField = detectPK(recordData);
         if (!pkField) {
-            const tableName = (gridMeta.vquery || '').replace(/^x/, '').replace(/s$/, '');
-            const candidates = [`id${gridMeta.vquery}`, `id${tableName}`];
-            pkField = candidates.find(c => recordData[c] !== undefined);
-        }
-        if (!pkField) {
-            pkField = Object.keys(recordData).find(k => k.startsWith('id'));
-        }
-        if (!pkField) {
-            const pkHierarchy = ['idfield', 'idcontrol', 'idgrid', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'iduser', 'idrole', 'idsistema', 'id'];
-            pkField = pkHierarchy.find(key => recordData[key] !== undefined) || Object.keys(recordData)[0];
+            console.error('No se pudo identificar la clave primaria para guardar inline');
+            return;
         }
 
         try {
@@ -1302,7 +1438,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                                 {isMobile ? <EditIcon /> : (uiStyles.edit?.label || "Editar")}
                             </Button>
 
-                            {!readonlyMode && (
+                            {!readonlyMode && !showDeleted && (
                                 <Button
                                     variant="outlined" color="error" disableFocusRipple
                                     disabled={!selectedRecord || gridMeta.readonlyg || uiStyles.delete?.disabled}
@@ -1318,6 +1454,29 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                                 >
                                     {isMobile ? <DeleteIcon /> : (uiStyles.delete?.label || "Borrar")}
                                 </Button>
+                            )}
+
+                            {showDeleted && (
+                                <Box sx={{ display: 'flex', gap: 1 }}>
+                                    <Button
+                                        variant="contained" color="success"
+                                        disabled={!selectedRecord} // Podría ser enabled con masivo, pero selectedRecord ya indica si hay al menos uno
+                                        onClick={handleRestoreRecord}
+                                        startIcon={<Icons.RestoreFromTrash />}
+                                        sx={{ borderRadius: '8px', textTransform: 'none' }}
+                                    >
+                                        Restaurar
+                                    </Button>
+                                    <Button
+                                        variant="contained" color="error"
+                                        disabled={!selectedRecord}
+                                        onClick={handlePermanentDelete}
+                                        startIcon={<DeleteIcon />}
+                                        sx={{ borderRadius: '8px', textTransform: 'none' }}
+                                    >
+                                        Borrar Físico
+                                    </Button>
+                                </Box>
                             )}
 
                             <Box sx={{ borderLeft: '1px solid', borderColor: 'divider', height: 28, mx: 0.5 }}></Box>
@@ -1379,6 +1538,14 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                                         Guardar interfaz
                                     </MenuItem>
                                 )}
+                                {(isDeveloper || user?.role?.toUpperCase() === 'ADMIN' || user?.role?.toUpperCase() === 'ADMINISTRADOR') && (
+                                    <MenuItem onClick={handleToggleDeleted} sx={{ color: showDeleted ? 'primary.main' : 'inherit' }}>
+                                        {showDeleted ? <Icons.Visibility /> : <Icons.DeleteSweep />}
+                                        <Typography sx={{ ml: 1 }}>
+                                            {showDeleted ? "Ver registros activos" : "Ver registros eliminados"}
+                                        </Typography>
+                                    </MenuItem>
+                                )}
                             </Menu>
                         </Box>
                     )}
@@ -1413,10 +1580,20 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                             <EditIcon fontSize="small" sx={{ mr: 1 }} /> Editar
                         </MenuItem>
                     )}
-                    {selectedRecord && !readonlyMode && (
+                    {selectedRecord && !readonlyMode && !showDeleted && (
                         <MenuItem onClick={() => { handleDeleteSelected(); handleCloseContextMenu(); }}>
-                            <DeleteIcon fontSize="small" sx={{ mr: 1, color: 'error.main' }} /> Eliminar (Ctrl+Supr)
+                            <DeleteIcon fontSize="small" sx={{ mr: 1 }} /> Borrar
                         </MenuItem>
+                    )}
+                    {selectedRecord && showDeleted && (
+                        <>
+                            <MenuItem onClick={() => { handleRestoreRecord(); handleCloseContextMenu(); }} sx={{ color: 'success.main' }}>
+                                <Icons.RestoreFromTrash fontSize="small" sx={{ mr: 1 }} /> Restaurar registro
+                            </MenuItem>
+                            <MenuItem onClick={() => { handlePermanentDelete(); handleCloseContextMenu(); }} sx={{ color: 'error.main' }}>
+                                <DeleteIcon fontSize="small" sx={{ mr: 1 }} /> Borrar definitivamente
+                            </MenuItem>
+                        </>
                     )}
                     <MenuItem onClick={() => { handleExportXlsx(); handleCloseContextMenu(); }}>
                         <DownloadIcon fontSize="small" sx={{ mr: 1 }} /> Exportar Excel
@@ -1441,15 +1618,14 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                         maintainColumnOrder={true}
                         getRowId={getRowId}
                         getRowStyle={getRowStyle}
-                        rowSelection="single"
+                        rowSelection="multiple"
                         suppressRowClickSelection={false}
+                        rowMultiSelectWithClick={false}
                         onSelectionChanged={handleSelectionChanged}
                         onCellDoubleClicked={handleCellDoubleClicked}
                         onRowClicked={(params) => {
-                            // Forzar selección en caso de que el evento estándar de AG Grid sea bloqueado por el contenedor
-                            if (params.node && !params.node.isSelected()) {
-                                params.node.setSelected(true);
-                            }
+                            // Al hacer clic en la fila, AG Grid por defecto deseleccionará 
+                            // las demás y marcará solo esta (comportamiento estándar).
                         }}
                         onSortChanged={handleSortChanged}
                         onFilterChanged={handleFilterChanged}
@@ -1458,7 +1634,72 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                         onCellValueChanged={handleCellValueChanged}
                         stopEditingWhenCellsLoseFocus={true}
                         onCellKeyDown={(params) => {
-                            const { event, rowIndex, api, column } = params;
+                            const { event, api, column, node, value } = params;
+
+                            // --- COPIAR FILAS (Ctrl+C / Cmd+C) ---
+                            const isCopyRow = (event.ctrlKey || event.metaKey) && (event.key === 'c' || event.key === 'C');
+                            // --- COPIAR CELDA (Ctrl+K / Cmd+K) ---
+                            const isCopyCell = (event.ctrlKey || event.metaKey) && (event.key === 'k' || event.key === 'K');
+
+                            if (isCopyRow || isCopyCell) {
+                                event.preventDefault();
+                                event.stopPropagation();
+
+                                const selectedNodes = api.getSelectedNodes();
+                                let textToCopy = '';
+
+                                if (isCopyRow) {
+                                    // Copiar toda la fila (o filas seleccionadas si hay varias)
+                                    // Si no hay filas seleccionadas explícitamente, tomamos la actual del nodo
+                                    const nodesToProcess = selectedNodes.length > 0 ? selectedNodes : [node];
+
+                                    textToCopy = nodesToProcess.filter(sn => sn).map(sn => {
+                                        return api.getAllDisplayedColumns()
+                                            .filter(col => {
+                                                const colDef = col.getColDef();
+                                                // Ignorar columna de selección
+                                                return colDef.checkboxSelection !== true;
+                                            })
+                                            .map(col => {
+                                                let val = api.getCellValue({
+                                                    rowNode: sn,
+                                                    column: col,
+                                                    node: sn,
+                                                    data: sn.data
+                                                });
+
+                                                if (val === undefined || val === null) val = sn.data[col.getColDef().field];
+
+                                                const fieldMeta = (gridMeta.fields || []).find(f => f.campo === col.getColDef().field);
+                                                if (fieldMeta && fieldMeta.comboDataKeyVal && fieldMeta.comboDataKeyVal[String(val)]) {
+                                                    val = fieldMeta.comboDataKeyVal[String(val)];
+                                                }
+                                                return (val !== null && val !== undefined) ? String(val) : '';
+                                            })
+                                            .join('\t');
+                                    }).join('\n');
+                                } else if (isCopyCell) {
+                                    // Copiar solo la celda actual (Cmd+K)
+                                    const rawValue = value !== undefined ? value : (node?.data?.[column.getColId()]);
+                                    textToCopy = (rawValue !== null && rawValue !== undefined) ? String(rawValue) : '';
+                                }
+
+                                if (textToCopy) {
+                                    navigator.clipboard.writeText(textToCopy).then(() => {
+                                        console.warn(`[Ghenesis] ${isCopyRow ? 'Fila(s)' : 'Celda'} copiada al portapapeles`);
+                                    }).catch(err => {
+                                        console.error('Error crítico al copiar:', err);
+                                        const textArea = document.createElement("textarea");
+                                        textArea.value = textToCopy;
+                                        document.body.appendChild(textArea);
+                                        textArea.select();
+                                        document.execCommand("copy");
+                                        document.body.removeChild(textArea);
+                                    });
+                                }
+                                return;
+                            }
+
                             if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
                                 if (api.getEditingCells().length > 0) {
                                     // Registrar movimiento pendiente y detener edición
@@ -1675,12 +1916,15 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                     <ConfirmDialog
                         open={isDeleting}
                         title="Confirmar Eliminación"
-                        message="¿Estás seguro de que deseas eliminar el registro seleccionado? Esta acción no se puede deshacer."
+                        message={gridRef.current?.api?.getSelectedNodes()?.length > 1
+                            ? `¿Estás seguro de que deseas eliminar los ${gridRef.current.api.getSelectedNodes().length} registros seleccionados?`
+                            : "¿Estás seguro de que deseas eliminar el registro seleccionado?"}
                         confirmText="Eliminar"
                         type="error"
                         onConfirm={executeDelete}
                         onCancel={() => setIsDeleting(false)}
                     />
+
 
                     <AlertDialog
                         open={alertConfig.open}

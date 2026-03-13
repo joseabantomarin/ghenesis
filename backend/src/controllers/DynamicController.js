@@ -33,6 +33,33 @@ exports.getFormDefinition = async (req, res) => {
     }
 };
 
+const ensureUpdtypeColumn = async (physicalTable) => {
+    try {
+        // Verificar si la columna updtype existe
+        const checkSql = `
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = $1 AND column_name = 'updtype'
+        `;
+        const res = await db.query(checkSql, [physicalTable.toLowerCase()]);
+
+        if (res.rows.length === 0) {
+            console.log(`🔨 Añadiendo columna 'updtype' a la tabla ${physicalTable}...`);
+            await db.query(`ALTER TABLE ${physicalTable} ADD COLUMN updtype SMALLINT DEFAULT 0`);
+
+            // Consulta técnica de comprobación síncrona según regla del usuario
+            const verifyRes = await db.query(checkSql, [physicalTable.toLowerCase()]);
+            if (verifyRes.rows.length === 0) {
+                throw new Error(`Fallo crítico: No se pudo verificar la creación de 'updtype' en ${physicalTable}`);
+            }
+        }
+    } catch (error) {
+        console.error(`❌ Error asegurando columna updtype en ${physicalTable}:`, error.message);
+        // No bloqueamos el flujo si falla (ej: tabla no existe o es una vista), 
+        // pero lo dejamos logueado para depuración.
+    }
+};
+
 exports.getSistemaConfig = async (req, res) => {
     try {
         const config = await MetadataService.getSistemaConfig();
@@ -78,50 +105,112 @@ const buildWrappedQuery = async (baseSql, baseParams, reqQuery, gridMeta) => {
     if (reqQuery.filters) {
         try {
             const filters = JSON.parse(reqQuery.filters);
-            Object.keys(filters).forEach(colId => {
+            for (const colId in filters) {
                 const fieldDef = gridMeta.fields.find(f => f.campo === colId);
-                if (fieldDef) {
-                    const filterObj = filters[colId];
-                    const dbColName = colId;
+                if (!fieldDef) continue;
 
-                    if (filterObj.filterType === 'text') {
-                        // Si es un campo de fecha o timestamp en la DB, usamos to_char para que la búsqueda sea 
-                        // independiente de la configuración regional de la DB.
-                        // Buscamos tanto en formato ISO (YYYY-MM-DD) como en el formato de visualización.
+                const filterObj = filters[colId];
+                const dbColName = colId;
+
+                const applySingleFilter = (obj) => {
+                    if (obj.filterType === 'text') {
                         if (fieldDef.tipod === 'D' || fieldDef.tipod === 'T') {
                             const visualFormat = (fieldDef.formato || 'DD/MM/YYYY').toUpperCase();
                             whereClauses.push(`(to_char(${dbColName}, 'YYYY-MM-DD') ILIKE $${paramIndex} OR to_char(${dbColName}, '${visualFormat}') ILIKE $${paramIndex})`);
+                        } else if (fieldDef.tipod === 'I' || fieldDef.tipod === 'F') {
+                            whereClauses.push(`CAST(${dbColName} AS TEXT) ILIKE $${paramIndex}`);
                         } else {
                             whereClauses.push(`${dbColName} ILIKE $${paramIndex}`);
                         }
-                        queryParams.push(`%${filterObj.filter}%`);
+                        queryParams.push(`%${obj.filter}%`);
                         paramIndex++;
-                    } else if (filterObj.filterType === 'number') {
-                        // AG Grid number match ('equals' default)
-                        whereClauses.push(`${dbColName} = $${paramIndex}`);
-                        queryParams.push(filterObj.filter);
-                        paramIndex++;
-                    } else if (filterObj.filterType === 'date') {
-                        // AG Grid date filter (Pasa la fecha como YYYY-MM-DD)
-                        // Casting a ::date en Postgres para ignorar la hora en la comparación
-                        const dateVal = filterObj.dateFrom ? filterObj.dateFrom.split(' ')[0] : null;
-                        if (dateVal) {
-                            if (filterObj.type === 'equals') {
-                                whereClauses.push(`${dbColName}::date = $${paramIndex}`);
-                            } else if (filterObj.type === 'lessThan') {
-                                whereClauses.push(`${dbColName}::date < $${paramIndex}`);
-                            } else if (filterObj.type === 'greaterThan') {
-                                whereClauses.push(`${dbColName}::date > $${paramIndex}`);
+                    } else if (obj.filterType === 'number') {
+                        const type = obj.type || 'equals';
+                        const cleanVal = (v) => (typeof v === 'string' ? parseFloat(v.replace(',', '.')) : v);
+                        const val = cleanVal(obj.filter);
+
+                        if (type === 'inRange') {
+                            const valTo = cleanVal(obj.filterTo);
+                            whereClauses.push(`${dbColName}::numeric BETWEEN $${paramIndex}::numeric AND $${paramIndex + 1}::numeric`);
+                            queryParams.push(val, valTo);
+                            paramIndex += 2;
+                        } else if (type === 'equals') {
+                            const hasDecimals = String(obj.filter).includes('.') || String(obj.filter).includes(',');
+                            if (!hasDecimals) {
+                                whereClauses.push(`TRUNC(${dbColName}::numeric) = $${paramIndex}::numeric`);
                             } else {
-                                // Default equals if unknown type
-                                whereClauses.push(`${dbColName}::date = $${paramIndex}`);
+                                whereClauses.push(`${dbColName}::numeric = $${paramIndex}::numeric`);
                             }
+                            queryParams.push(val);
+                            paramIndex++;
+                        } else {
+                            const operatorsMap = {
+                                'notEqual': '!=',
+                                'lessThan': '<',
+                                'lessThanOrEqual': '<=',
+                                'greaterThan': '>',
+                                'greaterThanOrEqual': '>='
+                            };
+                            const op = operatorsMap[type] || '=';
+                            whereClauses.push(`${dbColName}::numeric ${op} $${paramIndex}::numeric`);
+                            queryParams.push(val);
+                            paramIndex++;
+                        }
+                    } else if (obj.filterType === 'date') {
+                        const dateVal = obj.dateFrom ? obj.dateFrom.split(' ')[0] : null;
+                        if (dateVal) {
+                            const op = obj.type === 'lessThan' ? '<' : (obj.type === 'greaterThan' ? '>' : '=');
+                            whereClauses.push(`${dbColName}::date ${op} $${paramIndex}`);
                             queryParams.push(dateVal);
                             paramIndex++;
                         }
                     }
+                };
+
+                // Soporte para filtros múltiples de AG Grid (AND / OR)
+                if (filterObj.operator && (filterObj.condition1 || filterObj.condition2)) {
+                    const currentFilterClauses = [];
+                    const currentFilterParams = [];
+                    let currentParamIndex = paramIndex;
+
+                    const applyCondition = (conditionObj) => {
+                        if (!conditionObj) return;
+
+                        const originalWhereClausesLength = whereClauses.length;
+                        const originalQueryParamsLength = queryParams.length;
+                        const originalParamIndex = paramIndex;
+
+                        applySingleFilter(conditionObj);
+
+                        // Extract the clauses and params added by this condition
+                        const addedClauses = whereClauses.slice(originalWhereClausesLength);
+                        const addedParams = queryParams.slice(originalQueryParamsLength);
+
+                        currentFilterClauses.push(...addedClauses);
+                        currentFilterParams.push(...addedParams);
+
+                        // Restore global state for the next condition or filter
+                        whereClauses.splice(originalWhereClausesLength, whereClauses.length - originalWhereClausesLength);
+                        queryParams.splice(originalQueryParamsLength, queryParams.length - originalQueryParamsLength);
+                        paramIndex = originalParamIndex;
+                    };
+
+                    applyCondition(filterObj.condition1);
+                    applyCondition(filterObj.condition2);
+
+                    if (currentFilterClauses.length > 0) {
+                        const combinedClause = `(${currentFilterClauses.join(` ${filterObj.operator.toUpperCase()} `)})`;
+                        whereClauses.push(combinedClause.replace(/\$(\d+)/g, (_, num) => {
+                            const newIndex = currentParamIndex + (parseInt(num, 10) - 1);
+                            return `$${newIndex}`;
+                        }));
+                        queryParams.push(...currentFilterParams);
+                        paramIndex += currentFilterParams.length;
+                    }
+                } else {
+                    applySingleFilter(filterObj);
                 }
-            });
+            }
         } catch (e) {
             console.error("❌ Error parseando filtros de cabecera:", e);
         }
@@ -160,7 +249,11 @@ const buildWrappedQuery = async (baseSql, baseParams, reqQuery, gridMeta) => {
                 const dbField = fieldDef.campo;
 
                 if (operator === 'ILIKE') {
-                    whereClauses.push(`${dbField} ILIKE $${paramIndex}`);
+                    if (fieldDef.tipod === 'I' || fieldDef.tipod === 'F') {
+                        whereClauses.push(`CAST(${dbField} AS TEXT) ILIKE $${paramIndex}`);
+                    } else {
+                        whereClauses.push(`${dbField} ILIKE $${paramIndex}`);
+                    }
                     queryParams.push(`%${value}%`);
                 } else {
                     whereClauses.push(`${dbField} ${operator} $${paramIndex}`);
@@ -170,6 +263,14 @@ const buildWrappedQuery = async (baseSql, baseParams, reqQuery, gridMeta) => {
             }
         }
     });
+
+    // --- SISTEMA DE BORRADO LÓGICO (Soft Delete) ---
+    const showDeleted = reqQuery.showDeleted === 'true';
+    if (showDeleted) {
+        whereClauses.push(`updtype = 2`);
+    } else {
+        whereClauses.push(`(updtype IS NULL OR updtype <> 2)`);
+    }
 
     if (whereClauses.length > 0) {
         sql += ` WHERE ` + whereClauses.join(' AND ');
@@ -432,6 +533,7 @@ exports.saveGridData = async (req, res) => {
             return val !== undefined &&
                 (typeof val !== 'object' || val === null || val instanceof Date) &&
                 !col.startsWith('_') &&
+                col.toLowerCase() !== 'updtype' &&
                 !col.startsWith('__') &&
                 !calculatedFields.includes(colLower) &&
                 !skipColumns.has(colLower);
@@ -462,19 +564,17 @@ exports.saveGridData = async (req, res) => {
 
             const setStatements = updateCols.map((col, idx) => `${col} = $${idx + 1}`);
             updateCols.forEach(col => params.push(dataToSave[col]));
-
-            params.push(recordId); // ID al final
-
-            sql = `UPDATE ${physicalTable} SET ${setStatements.join(', ')} WHERE ${pkField} = $${params.length}`;
+            sql = `UPDATE ${physicalTable} SET ${setStatements.join(', ')}, updtype = $${updateCols.length + 1} WHERE ${pkField} = $${updateCols.length + 2}`;
 
         } else {
+            columns.forEach(col => values.push(dataToSave[col]));
+            values.push(0); // 0: Recién ingresado (updtype)
+
             const placeholders = columns.map((_, idx) => `$${idx + 1}`);
-            columns.forEach(col => params.push(dataToSave[col]));
-            sql = `INSERT INTO ${physicalTable} (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`;
+            sql = `INSERT INTO ${physicalTable} (${columns.join(', ')}, updtype) VALUES (${placeholders.join(', ')}, $${columns.length + 1}) RETURNING ${pkField}`;
         }
 
-
-        await db.query(sql, params);
+        const result = await db.query(sql, values);
 
         res.json({
             success: true,
@@ -509,18 +609,58 @@ exports.deleteGridData = async (req, res) => {
 
         // Replicando arquitectura Delphi: La tabla real reside en gridMeta.nombre
         const physicalTable = gridMeta.nombre;
-        // Identificar el campo Primary Key (PK) buscando 'id' o usando el primer campo oculto/int
         const allowedFields = gridMeta.fields.map(f => f.campo);
         const pkField = allowedFields.find(c => c.startsWith('id') || c.endsWith('id')) || allowedFields[0];
 
-        const sql = `DELETE FROM ${physicalTable} WHERE ${pkField} = $1`;
+        // Asegurar columna updtype
+        await ensureUpdtypeColumn(physicalTable);
+
+        // Borrado lógico: Cambiar updtype a 2
+        // Soporte para múltiples IDs (separados por coma)
+        const sql = `UPDATE ${physicalTable} SET updtype = 2 WHERE ${pkField}::text = ANY(STRING_TO_ARRAY($1, ','))`;
 
         await db.query(sql, [id]);
 
-        res.json({ success: true, message: 'Registro eliminado exitosamente' });
+        res.json({ success: true, message: 'Registro(s) movido(s) a papelera' });
 
     } catch (error) {
         console.error('Error eliminando base de datos:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+// RESTAURAR REGISTRO (updtype -> 1)
+exports.restoreGridData = async (req, res) => {
+    try {
+        const { idform, idgrid, id } = req.params;
+        const metadata = await MetadataService.getFormMetadata(idform);
+        const gridMeta = metadata.grids.find(g => g.idgrid === Number(idgrid));
+        const physicalTable = gridMeta.nombre;
+        const allowedFields = gridMeta.fields.map(f => f.campo);
+        const pkField = allowedFields.find(c => c.startsWith('id') || c.endsWith('id')) || allowedFields[0];
+
+        // Soporte para múltiples IDs
+        await db.query(`UPDATE ${physicalTable} SET updtype = 1 WHERE ${pkField}::text = ANY(STRING_TO_ARRAY($1, ','))`, [id]);
+        res.json({ success: true, message: 'Registro(s) restaurado(s) correctamente' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+// BORRADO DEFINITIVO (Physical Delete)
+exports.permanentDeleteGridData = async (req, res) => {
+    try {
+        const { idform, idgrid, id } = req.params;
+        const metadata = await MetadataService.getFormMetadata(idform);
+        const gridMeta = metadata.grids.find(g => g.idgrid === Number(idgrid));
+        const physicalTable = gridMeta.nombre;
+        const allowedFields = gridMeta.fields.map(f => f.campo);
+        const pkField = allowedFields.find(c => c.startsWith('id') || c.endsWith('id')) || allowedFields[0];
+
+        // Soporte para múltiples IDs
+        await db.query(`DELETE FROM ${physicalTable} WHERE ${pkField}::text = ANY(STRING_TO_ARRAY($1, ','))`, [id]);
+        res.json({ success: true, message: 'Registro(s) eliminado(s) físicamente del sistema' });
+    } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
 };

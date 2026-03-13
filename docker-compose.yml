@@ -25,18 +25,33 @@ services:
       - DB_NAME=ghenesis
       - PORT=3000
       - JWT_SECRET=ghenesis_ultra_secret_key_2026
+      # Credenciales para envio de correos usando Gmail
+      - GMAIL_USER=joseabantomarin@gmail.com
+      - GMAIL_APP_PASSWORD=fhbaoqxmzjdneuwj
+      - SMTP_FROM_NAME=Soporte Ghenesis
     ports:
       - "3000:3000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: npm run dev
     depends_on:
       - postgres_db
 
   frontend:
     build:
       context: ./frontend
+      target: build
     container_name: ghenesis_frontend
     restart: always
+    environment:
+      - BACKEND_URL=http://backend:3000
     ports:
-      - "8077:80" # El Nginx corre en el 80 dentro del contenedor, el cual mapeamos al 8080 localmente
+      - "8077:5173" # Vite dev server corre en 5173
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev
     depends_on:
       - backend
 

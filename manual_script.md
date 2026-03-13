@@ -413,4 +413,136 @@ Para lograr que la tabla se comporte de forma intuitiva sin inyectar joins compl
 
 **Cómo funciona tras bambalinas:**
 * **Frontend interactivo:** El usuario verá "Juan" en su combo. Como tú seteaste `datafield = 'cliente'`, al momento de guardar el formulario o editar inline, React extrae el ID real `15` y secretamente reconstruye el paquete de cambios forzando `cliente = 15`.
-* **Backend Inquebrantable:** El servidor leerá la metadata `datafield`. Automáticamente comprenderá que recibiste valores por la columna virtual `nombre_cliente` y los extirpará del payload, impidiendo que Postgres colapse gritándote *"la columna nombre_cliente no existe" *cuando haga el `UPDATE/INSERT` nativo hacia tu tabla `venta`. Solo viajará hacia Postgres tu `cliente = 15`, manteniendo la absoluta integridad referencial de tu base de datos.
+---
+
+## 13. Sistema de Borrado Lógico (Soft Delete)
+
+El framework Ghenesis implementa un sistema de borrado lógico por defecto para todas las tablas. Esto permite recuperar registros eliminados accidentalmente y mantener un registro de auditoría de los cambios.
+
+### 13.1 Campo `updtype`
+Todas las tablas gestionadas por el framework deben tener un campo numérico llamado `updtype`. Si el campo no existe, el framework lo creará automáticamente al intentar guardar o borrar datos. Los valores posibles son:
+- **0**: Registro nuevo.
+- **1**: Registro modificado.
+- **2**: Registro eliminado (Borrado Lógico).
+
+### 13.2 Funcionamiento en Grillas
+- Por defecto, las grillas filtran y ocultan automáticamente todos los registros donde `updtype = 2`.
+- Al presionar el botón "Borrar" (o `Ctrl+Supr`), el registro no se elimina físicamente, sino que su valor de `updtype` cambia a 2.
+
+### 13.3 Operaciones Masivas (Bulk Operations)
+Ghenesis permite realizar operaciones sobre múltiples filas seleccionadas mediante los checkboxes:
+- **Borrado Lógico Masivo**: Selecciona varias filas y presiona "Borrar". El sistema te pedirá confirmación indicando el número total de registros que serán movidos a la papelera.
+- **Restauración Masiva**: En la vista de registros eliminados, selecciona los registros deseados y presiona **"Restaurar"**. Todos los registros seleccionados volverán a estar activos simultáneamente.
+- **Borrado Físico Masivo**: Permite vaciar la papelera eliminando definitivamente múltiples registros seleccionados de una sola vez.
+
+> [!NOTE]
+> Todas las operaciones masivas utilizan un sistema inteligente de detección de clave primaria que garantiza la integridad de los datos, incluso en tablas con nombres de ID personalizados (ej. `idestudiante`).
+
+## 14. Selección y Atajos de Copiado (Clipboard Avanzado)
+Ghenesis incorpora un sistema de selección múltiple y gestión de portapapeles diseñado para la productividad masiva y la integración con herramientas externas como Microsoft Excel.
+
+### A. Sistema de Selección Híbrida
+Las grillas presentan una columna fija a la izquierda con cuadraditos (checkboxes) que permiten un control dual:
+
+1.  **Selección Múltiple (Checkboxes):**
+    *   **Individual:** Al hacer clic en el checkbox de una fila, esta se suma o resta de la selección actual sin afectar a las demás.
+    *   **Masiva (Header):** El checkbox en la cabecera permite seleccionar o deseleccionar todas las filas visibles en la página actual.
+2.  **Selección Única (Clic en Datos):**
+    *   Al hacer clic en cualquier celda de datos (fuera del checkbox), el sistema automáticamente **limpia** cualquier selección previa y marca **únicamente** la fila actual. Esto permite una navegación rápida sin dejar "residuos" de selecciones anteriores.
+3.  **Rangos (Shift + Clic):**
+    *   Puedes seleccionar bloques continuos haciendo clic en una fila y luego pulsando `Shift + Clic` en otra.
+
+### B. Atajos de Teclado Profesionales
+El framework separa el copiado de registros completos del copiado de datos puntuales para evitar la limpieza manual de información tras pegar:
+
+| Atajo | Acción | Resultado |
+| :--- | :--- | :--- |
+| **`Cmd + C`** (Mac) / **`Ctrl + C`** (Win) | **Copiar Fila(s)** | Copia el contenido completo de la fila actual (todas sus columnas visibles). Si hay varias filas seleccionadas con checks, las copia todas en bloque. |
+| **`Cmd + K`** (Mac) / **`Ctrl + K`** (Win) | **Copiar Celda** | Copia **únicamente el valor** de la celda donde está el foco del cursor. Ideal para llevarse un ID, un código o un monto específico. |
+
+### C. Compatibilidad con Excel / Hojas de Cálculo
+Cuando utilizas el copiado de filas (`Cmd + C`), Ghenesis genera un formato de **Valores Separados por Tabuladores (TSV)**. 
+*   **Limpieza Automática:** El sistema ignora columnas técnicas (como los checkboxes de selección o botones de acción) para que los datos pegados sean puros.
+*   **Pegado Directo:** Al pegar en Excel o Google Sheets, cada campo se ubicará automáticamente en su celda correspondiente, respetando el orden visual de la grilla.
+
+---
+
+## 15. Vistas Alternativas (Enlaces y Dashboards HTML)
+
+Ghenesis permite que un módulo, en lugar de mostrar la rejilla de datos estándar, se convierta en una ventana de contenido externo o un Dashboard personalizado altamente interactivo.
+
+### 15.1 Modo Enlace (iFrame Externo)
+Ideal para integrar herramientas externas (ej. Tableau, PowerBI, Wikis) directamente dentro del framework.
+- **Configuración (`XFORMS`)**:
+    - **`enlace`**: Ingresa la URL completa.
+    - El sistema renderizará un `iframe` a pantalla completa eliminando la rejilla de datos.
+
+### 15.2 Modo Ventana (Dashboard / Custom UI)
+Permite crear interfaces completas usando HTML5 y JavaScript.
+- **Configuración (`XFORMS`)**: `ventana = true`.
+- **Contenido (`XGRID`)**:
+    - **`cabecera`**: Código HTML y CSS.
+    - **`ejecuta`**: Código JavaScript de inicialización e interactividad.
+
+### 15.3 Ejemplo de Dashboard Premium Interactivo
+
+**HTML (`cabecera`)**:
+```html
+<div class="dashboard-container">
+  <div class="stats-grid">
+    <div class="stat-card" id="card-revenue">
+      <div class="stat-label">Ingresos Totales</div>
+      <div class="stat-value" id="val-revenue">$ 0.00</div>
+    </div>
+  </div>
+  <div id="activity-log"></div>
+  <button id="btn-notify">Test de Alerta</button>
+</div>
+```
+
+**JavaScript (`ejecuta`)**:
+```javascript
+// Los scripts se ejecutan al cargar la pestaña
+setTimeout(() => {
+    // 1. Inicializar datos dinámicos
+    document.getElementById("val-revenue").innerHTML = "$ 48,250";
+    
+    // 2. Vincular eventos al DOM del dashboard
+    const btn = document.getElementById("btn-notify");
+    if (btn) {
+        btn.onclick = () => {
+            // Acceso a la API de Ghenesis
+            ui.alert("Mensaje Emergente", "¡Esto funciona!", "success");
+            ui.notify("Notificación enviada");
+        };
+    }
+}, 300);
+```
+
+---
+
+## 16. Modo Reporte (Banded Reporting - Estilo FastReport.js)
+
+Ghenesis permite la integración de motores de reportes basados en bandas (Banded Reports) mediante la tabla `xreports`.
+
+### 16.1 La tabla `xreports`
+Este almacén de metadatos guarda la definición técnica del reporte:
+- **`formato`**: Contiene el XML o JSON de la plantilla (ej: un archivo `.frx` de FastReport).
+- **`ejecuta`**: Script que prepara el JSON de datos desde PostgreSQL antes de enviarlo al motor de renderizado.
+
+### 16.2 Configuración del Módulo
+Para que una pestaña de Ghenesis se comporte como un visor de reportes:
+1. En `xforms`, marcar **`reporte = true`**.
+2. Asociar el **`idreport`** correspondiente de la tabla `xreports`.
+
+### 16.3 Capacidades del Visualizador (Viewer)
+El componente `DynamicReport` detecta automáticamente este modo y ofrece:
+- **Exportación Directa**: PDF, Excel, HTML.
+- **Paginación Virtual**: Navegación por hojas.
+- **Parametrización**: Posibilidad de inyectar filtros desde el script `ejecuta`.
+
+### 16.4 Diseñador Integrado (Designer)
+Habilitando el modo de diseño, el desarrollador (o usuario con permisos) puede manipular:
+- **Páginas y Bandas**: Page Header, Column Header, Data Band, Group Footer.
+- **Árbol de Datos**: Arrastrar campos del dataset JSON directamente al lienzo.
+- **Guardado Automático**: Al presionar guardar, el metadato se actualiza en la tabla `xreports` sin necesidad de subir archivos manuales por FTP/SSH.

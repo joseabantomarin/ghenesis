@@ -6,6 +6,10 @@ const authMiddleware = require('../middlewares/authMiddleware');
 
 // Auth básico
 router.post('/login', AuthController.login);
+router.post('/register', AuthController.register);  // Nuevo Endpoint de Registro
+router.post('/recover-password', AuthController.recoverPassword);
+router.post('/reset-password', AuthController.resetPassword);
+router.post('/change-password', authMiddleware, AuthController.changePassword);
 router.get('/me', authMiddleware, AuthController.me);
 router.get('/permissions', authMiddleware, AuthController.getMyPermissions);
 

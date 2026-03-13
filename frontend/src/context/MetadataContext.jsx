@@ -7,16 +7,20 @@ const MetadataContext = createContext();
 export const useMetadata = () => useContext(MetadataContext);
 
 export const MetadataProvider = ({ children }) => {
-    const { token, user } = useAuth();
+    const { token, user, loading: authLoading } = useAuth();
     const [menu, setMenu] = useState([]);
     const [formsCache, setFormsCache] = useState({});
     const [permissions, setPermissions] = useState({}); // { idform: { readonly, hidden } }
     const [loadingMenu, setLoadingMenu] = useState(true);
 
-    // Cargar menú y permisos cuando hay token
+    // Cargar menú y permisos cuando hay token y auth no está cargando
     useEffect(() => {
+        if (authLoading) return; // Esperar a que Auth termine de validar sesión/setear headers
+
         if (!token) {
             setLoadingMenu(false);
+            setMenu([]);
+            setPermissions({});
             return;
         }
         const fetchData = async () => {
@@ -34,14 +38,14 @@ export const MetadataProvider = ({ children }) => {
                     setPermissions(permRes.data.data);
                 }
             } catch (error) {
-                // Silencioso en producción
+                console.error('Error fetching metadata:', error);
             } finally {
                 setLoadingMenu(false);
             }
         };
         setLoadingMenu(true);
         fetchData();
-    }, [token]);
+    }, [token, authLoading]);
 
     // Función para obtener la definición de un módulo específico
     const getFormDefinition = async (idform) => {

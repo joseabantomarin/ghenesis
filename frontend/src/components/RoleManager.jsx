@@ -55,6 +55,18 @@ const RoleManager = () => {
             valueFormatter: (params) => tipoLabels[params.value] || 'Otro'
         },
         {
+            field: 'invitado', headerName: 'Invitado', width: 110,
+            cellRenderer: (params) => (
+                <Checkbox
+                    checked={params.value || false}
+                    size="small"
+                    onChange={(e) => updatePermission(params.data.idform, 'invitado', e.target.checked)}
+                    sx={{ p: 0 }}
+                />
+            ),
+            cellStyle: { display: 'flex', alignItems: 'center', justifyContent: 'center' }
+        },
+        {
             field: 'readonly', headerName: 'Solo Leer', width: 110,
             cellRenderer: (params) => (
                 <Checkbox
@@ -132,7 +144,8 @@ const RoleManager = () => {
                 permissions: permissions.map(p => ({
                     idform: p.idform,
                     readonly: p.readonly || false,
-                    hidden: p.hidden || false
+                    hidden: p.hidden || false,
+                    invitado: p.invitado || false
                 }))
             });
             if (res.data.success) {

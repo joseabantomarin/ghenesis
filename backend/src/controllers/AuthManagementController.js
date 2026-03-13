@@ -13,6 +13,7 @@ exports.getUsers = async (req, res) => {
         `);
         res.json({ success: true, data: result.rows });
     } catch (error) {
+        console.error('getUsers err:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 };
@@ -138,7 +139,8 @@ exports.getPermissions = async (req, res) => {
         const result = await db.query(`
             SELECT f.idform, f.descripcion as module_name, f.tipo,
                    COALESCE(p.readonly, false) as readonly,
-                   COALESCE(p.hidden, false) as hidden
+                   COALESCE(p.hidden, false) as hidden,
+                   COALESCE(p.invitado, false) as invitado
             FROM XFORMS f
             LEFT JOIN XPERMISSIONS p ON f.idform = p.idform AND p.idrole = $1
             ORDER BY f.tipo ASC, f.nroform ASC, f.idform ASC
@@ -161,10 +163,10 @@ exports.savePermissions = async (req, res) => {
 
         // Insertar solo los que tienen algún permiso activo
         for (const p of permissions) {
-            if (p.readonly || p.hidden) {
+            if (p.readonly || p.hidden || p.invitado) {
                 await client.query(
-                    'INSERT INTO XPERMISSIONS (idrole, idform, readonly, hidden) VALUES ($1, $2, $3, $4)',
-                    [idrole, p.idform, p.readonly || false, p.hidden || false]
+                    'INSERT INTO XPERMISSIONS (idrole, idform, readonly, hidden, invitado) VALUES ($1, $2, $3, $4, $5)',
+                    [idrole, p.idform, p.readonly || false, p.hidden || false, p.invitado || false]
                 );
             }
         }

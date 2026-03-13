@@ -225,3 +225,66 @@
 - **Tema Nativo Eclipse:** Se configuró el editor para utilizar el tema visual clásico "Eclipse", cumpliendo con la exigencia estética exacta solicitada (fondo blanco, identificadores morados) sin necesidad de parches forzados.
 - **Soporte Multi-Lenguaje Ampliado:** Se habilitó el soporte completo de resaltado de sintaxis para JavaScript, SQL y HTML (incluyendo dependencias `xml`, `css` y el modo `htmlmixed`) en el componente `MemoEditorDialog.jsx`.
 - **Estabilidad de UI en Modales:** El componente ahora rinde perfectamente en altura 100% y se corrigieron todos los bloqueos de teclado e interacción derivados del secuestro de foco de MUI.
+
+## [2026-03-04] - Filtrado Numérico Inteligente y Copiado Pro
+
+### Filtrado Numérico de Alta Precisión (Smart Search)
+- **Sincronización Backend-Frontend:** Implementación de una lógica de búsqueda "Espejo" donde tanto el servidor (PostgreSQL) como la grilla (AG Grid) comparten el mismo criterio de búsqueda para números.
+- **Búsqueda Inteligente por Enteros:** 
+    - Si el usuario busca un número entero (ej: `24961`), el sistema aplica automáticamente la función `TRUNC()` en la base de datos y `Math.trunc()` en el frontend.
+    - **Resultado:** Permite encontrar montos rápidamente buscando solo la parte entera, ignorando los céntimos, pero manteniendo la capacidad de búsqueda exacta si se incluyen decimales (ej: `24961.13`).
+- **Soporte de Multi-Condiciones:** El motor del backend (`DynamicController`) ahora procesa recursivamente filtros complejos de AG Grid (condiciones "Y" / "O"), permitiendo combinar múltiples reglas sobre una misma columna sin errores de SQL.
+- **Casteo de Precisión:** Se forzó el uso de `::numeric` en todas las comparaciones de base de datos para evitar errores de redondeo típicos de los tipos de punto flotante (`float`).
+
+### Experiencia de Usuario (UX) & Clipboard
+- **Copiar Celda Pro (Ctrl+C / Cmd+C):** 
+    - Implementación nativa de atajos de teclado para copiar el contenido de la celda activa al portapapeles.
+    - **Compatibilidad Universal:** Soporte completo para **Mac (Cmd+C)** y Windows/Linux (Ctrl+C).
+    - **Lógica de Extracción:** El sistema prioriza el valor formateado visible (ej: con símbolos de moneda o formatos de fecha) para que lo que el usuario ve sea exactamente lo que se copia.
+    - **Robustez:** Integración del API `navigator.clipboard` con fallback a `execCommand('copy')` para asegurar funcionalidad en todos los navegadores y entornos.
+- **Remoción de Distracciones:** Se eliminaron los avisos visuales ("Copiado") para permitir un flujo de trabajo rápido y sin interrupciones, manteniendo avisos técnicos solo en la consola de depuración.
+
+### Infraestructura de Desarrollo
+## [2026-03-04] - Selección Múltiple y Atajos de Copiado Avanzados
+
+### Selección Múltiple por Checkboxes (AG Grid)
+- **Columna de Selección Dinámica:** Se inyectó una columna fija a la izquierda con checkboxes para facilitar la selección múltiple sin depender únicamente de combinaciones de teclado.
+- **Header Checkbox:** Opción para "Seleccionar Todo" con un solo clic en la cabecera de la grilla.
+- **Comportamiento Híbrido:**
+    - **Clic en Checkbox:** Alterna la selección de la fila (suma/resta) sin limpiar la selección anterior.
+    - **Clic en Datos:** Limpia la selección previa y marca únicamente la fila actual (ideal para navegación rápida).
+    - **Soporte Shift+Click:** Posibilidad de seleccionar bloques de filas manteniendo la tecla Shift.
+
+### Motor de Copiado Inteligente (Shortcuts)
+- **Cmd / Ctrl + C (Copiado de Filas):** 
+    - Atajo rediseñado para copiar la **fila completa** (todas las celdas visibles).
+    - Si se han seleccionado múltiples filas con los checkboxes, se copian todas en bloque.
+    - Formato TSV (Tab-Separated Values) optimizado para pegar directamente en **Excel** o Google Sheets.
+- **Cmd / Ctrl + K (Copiado de Celda):** 
+    - Nuevo atajo exclusivo para copiar únicamente el valor de la **celda activa** donde esté el foco del cursor.
+    - Mantiene la agilidad para llevarse datos individuales sin necesidad de toda la fila.
+- **Limpieza de Datos:** El sistema de copiado ignora automáticamente columnas técnicas (como la de selección) para entregar datos limpios al portapapeles.
+
+## [2026-03-13] - Configuración de Recuperación de Contraseña y SMTP
+
+### Backend & Seguridad
+- **Servicio de Correo (Nodemailer):** Se configuraron exitosamente las credenciales SMTP (`GMAIL_USER`, `GMAIL_APP_PASSWORD`, `SMTP_FROM_NAME`) en los archivos `.env` (raíz y backend) para permitir el envío de correos de recuperación.
+- **Flujo de Recuperación (Reset Password):** Se verificó el funcionamiento del endpoint de recuperación de contraseña, asegurando que el backend genera el token temporal y envía el enlace de recuperación correctamente al usuario sin fallos de entorno.
+
+## [2026-03-13] - Registro de Usuarios y Rol "INVITADO"
+
+### Endpoint y Flujo de Registro
+- **Nuevo Endpoint (`/register`):** Se habilitó un endpoint en `authRoutes.js` que recibe `username`, `password`, `fullname` y `email`.
+- **Validador de Existencias:** Previo a la inserción, el backend (`AuthController.register`) comprueba rigurosamente que el nombre de usuario o el correo electrónico no se encuentren ya registrados en la base de datos para prevenir duplicados.
+- **Asignación Automática:** Se implementó una rutina que recupera el `idrole` asociado al rol predeterminado "INVITADO" y lo vincula automáticamente al nuevo usuario sin intervención administrativa.
+- **Seguridad (Hashing):** La contraseña pasa por `bcryptjs` con un factor de 10 iteraciones de _salt_ antes de inyectarse en los registros de la base.
+
+### Manejo de Roles y Permisos Extendidos
+- **Nueva Columna de Permisos (`invitado`):** Se alteró estructuralmente la tabla `XPERMISSIONS` añadiendo el campo booleano `invitado`. 
+- **Adaptación Funcional:** `AuthManagementController` y los endpoints de inicio de sesión fueron actualizados para registrar (lectura/escritura) e inyectar en el token JWT la columna lógica "invitado".
+- **Columna UI:** El componente `RoleManager.jsx` integra nativamente esta columna como un _checkbox_ interactivo en su _Grid_ para habilitar o deshabilitar módulos predefinidos de manera particular al rol INVITADO.
+
+### Integración de Menú Inteligente
+- **Cierre Perimetral (Filtro por Rol):** La interfaz visual (`DynamicMenu.jsx`) fue acondicionada para identificar si la cuenta activa porta el esquema de permisos del rol "INVITADO". 
+- Si bien las características estándares (`readonly`, `hidden`) se mantienen vigentes para todos los usuarios, los invitados únicamente podrán visualizar y acceder a los _módulos o formularios (idform)_ explícitamente habilitados (con check validado en la base de datos).
+- **Control de Acceso a Configuración:** Se retiró el menú "Configuración" (Usuarios / Roles) que antes estaba empotrado en duro para garantizar consistencia. Ahora solo los mantenedores y administradores logran verlo, gestionándose a través de permisos de BD.

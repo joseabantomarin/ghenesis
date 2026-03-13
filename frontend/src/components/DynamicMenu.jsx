@@ -56,6 +56,12 @@ const DynamicMenu = ({ onItemClick }) => {
     const filterHidden = (items) => {
         return items.filter(item => {
             const perm = permissions[item.idform];
+            
+            // Si el rol es INVITADO, solo mostrar módulos con check de invitado
+            if (userRole === 'INVITADO') {
+                if (!perm || !perm.invitado) return false;
+            }
+
             if (perm && perm.hidden) return false;
             return true;
         });
@@ -98,7 +104,13 @@ const DynamicMenu = ({ onItemClick }) => {
             return (
                 <ListItemButton
                     key={item.idform}
-                    onClick={() => itemClick(item.idform, item.descripcion || item.cform, 'view', item.iconname)}
+                    onClick={() => {
+                        let type = 'view';
+                        let targetId = item.idform;
+                        if (item.idform === 101) { type = 'users'; targetId = 'users'; }
+                        else if (item.idform === 102) { type = 'roles'; targetId = 'roles'; }
+                        itemClick(targetId, item.descripcion || item.cform, type, item.iconname);
+                    }}
                     sx={{ py: 0.3, pl: 4 + depth * 2 }}
                 >
                     <ListItemIcon sx={{ minWidth: 32 }}>
@@ -165,14 +177,6 @@ const DynamicMenu = ({ onItemClick }) => {
             {/* 4. Configuración — Solo visible para DEVELOPER y ADMINISTRADOR */}
             {isAdmin && (
                 <MenuCategory id="configuracion" label="Configuración" icon={ConfiguracionIcon}>
-                    <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => itemClick('users', 'Usuarios', 'users', 'People')}>
-                        <ListItemIcon sx={{ minWidth: 32 }}><UsersIcon fontSize="small" /></ListItemIcon>
-                        <ListItemText primary="Usuarios" primaryTypographyProps={{ fontSize: '0.875rem' }} />
-                    </ListItemButton>
-                    <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => itemClick('roles', 'Roles', 'roles', 'Shield')}>
-                        <ListItemIcon sx={{ minWidth: 32 }}><RolesIcon fontSize="small" /></ListItemIcon>
-                        <ListItemText primary="Roles" primaryTypographyProps={{ fontSize: '0.875rem' }} />
-                    </ListItemButton>
                     {renderMenuItems(rootsByTipo(4), menu)}
                 </MenuCategory>
             )}
@@ -180,7 +184,7 @@ const DynamicMenu = ({ onItemClick }) => {
             {/* 5. Sistema */}
             <MenuCategory id="sistema" label="Sistema" icon={SistemaIcon}>
                 {renderMenuItems(rootsByTipo(5), menu)}
-                <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => alert('Próximamente: Cambiar Password')}>
+                <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => itemClick('change-password', 'Cambiar password', 'change-password', 'VpnKey')}>
                     <ListItemIcon sx={{ minWidth: 32 }}><PasswordIcon fontSize="small" /></ListItemIcon>
                     <ListItemText primary="Cambiar password" primaryTypographyProps={{ fontSize: '0.875rem' }} />
                 </ListItemButton>
