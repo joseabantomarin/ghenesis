@@ -89,6 +89,7 @@ upddate. campo que se actualiza cuando se hacen modificaciones (date)
 updtype. campo que se actualiza cuando se hacen modificaciones (tipo, misma logica que en xforms y en todo mi sistema, todas las tablas tienen estos campos)
 sdraw. Codigo Script que me sirve para manejar el comportamiento al hacer ondrawcolumncells del unidbgrid, esto me sirve para pintar filas segun algunas condiciones.
 twoColumns. para mostrar los datos de edicion en una sola columna o en dos (en dispositivos moviles, siempre se muestra una sola columna)
+masterdetail. string. Formato "key_master:key_detail". Define explícitamente la relación maestro-detalle (Ej: "idacademia:idcurso").
 
 XFIELD (tabla que da personalizacion a cada campo de la grilla de datos)
 idfield. Identificador unico.
@@ -103,7 +104,12 @@ fontbold. valor logico que indica si la letra del campo se muestra en negrita.
 alinear. string. I: izquierda, C: centro, D: derecha.
 tipod: Tipo de dato que uso segun mi diseño de base de datos: trabaja con C: Caracter, D; Date, F: Float, I: Integer, B: Boolean, W: Memo
 formato: Sobre todo en caso de los numeros me sirve para dar formato a como se visualizan ejemplo "#,#0.00"
-valxdefecto. Valor por defecto directo para el campo, si necesito que el valor por defecto sea dinamico uso snewrecord del xgrid
+valxdefecto. Valor inicial para el campo al insertar un registro. Soporta expresiones dinámicas:
+- **Literales**: `100`, `'ACTIVO'` (cadenas entre comillas simples).
+- **Funciones**: `date()` (fecha actual ISO), `time()` (hora actual HH:mm:ss), `user()` (datos del usuario logueado).
+- **Interfaz**: `ui.header.id_elemento` (lee valor de un input en la cabecera).
+- **Contexto**: `master.campo` (valor del registro padre).
+- **Scripts**: `await api.get('/url').then(...)` (soporta promesas asíncronas).
 valcombo. Valores del combo, esto lo uso para crear listas simples rapidamente, por ejemplo sexo: Masculino, Femenino. segun eso automaticamente el campo se crea de tipo combobox
 datafield. string. Campo relacionado con la tabla xtable que se verá mas adelante.
 oculto. Si necesito que el campo se cree pero esté en modo oculto. Esto lo oculta solo en la grilla
@@ -143,6 +149,16 @@ Title. Titulo del reporte (el que va a ir en la hoja)
 consulta. Consulta o query que puede definirse
 Rformato. Formato Fr3 en el que fastreport guarda el reporte diseñado (normalmente esto lo diseño con una aplicación de escritorio creada para ese fin)
 
+XROLES (Tabla que define los niveles de acceso al sistema)
+Idrole. Identificador único del rol.
+Rolename. Nombre del rol (ej: ADMINISTRADOR, DEVELOPER).
+Descripcion. Texto explicativo del alcance del rol.
+Tipo. Integer. Define la jerarquía técnica de acceso:
+- **0 (Developer)**: Acceso total, herramientas de programación y visualización de registros eliminados.
+- **1 (Administrador)**: Gestión completa de usuarios y roles, visualización de registros eliminados.
+- **2 (Usuario Final)**: Acceso restringido según la matriz de permisos.
+- **3 (Invitado)**: Roles de solo lectura o acceso base.
+
 ## Otras tablas
 Por otro lado tengo estas otras tablas:
 XSISTEMA. Para configurar el nombre de la aplicación, el icono que se muestra en la web, los iconos para las categorias general, operaciones, reportes, config, system; un codigo inicial al hacer login
@@ -171,11 +187,11 @@ La propiedad `gparent` es el eje de la interfaz y los datos:
     *   Aparecen **dentro del formulario de edición** de su grilla padre.
     *   Están anidadas visualmente debajo de los campos de edición.
 
-### 2.2 Relación de Datos (Auto-Linking)
-Para el filtrado de datos en grillas detalle, se utiliza una convención de nombres (Auto-Detection):
-1.  El sistema identifica la **Primary Key (PK)** de la fila seleccionada en la grilla padre (ej: `idform`, `idgrid`, `idacademia`).
-2.  Ese nombre de campo se envía automáticamente a la API como filtro para la grilla hija.
-3.  La grilla hija refresca sus datos basándose en ese identificador.
+### 2.2 Relación de Datos (Linking)
+Para el filtrado y pre-población de datos en grillas detalle:
+1.  **Prioridad Explícita (`masterdetail`)**: El sistema busca este campo en los metadatos de la grilla hija. Si existe y tiene el formato `key_master:key_detail`, usa `key_master` para leer el valor del padre y `key_detail` para filtrar el hijo.
+2.  **Auto-Detection (Heurística)**: Si no hay configuración explícita, identifica la **Primary Key (PK)** del padre y busca coincidencia de nombre en el hijo.
+3.  **Pre-población**: Al agregar un nuevo registro en el detalle, el campo de enlace se pre-llena automáticamente con la llave del maestro.
 
 ## 3. Comportamiento de Edición
 

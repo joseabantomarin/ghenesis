@@ -365,3 +365,64 @@
 ### Estabilidad de Posición de Filas
 - **ORDER BY Predeterminado:** Se añadió un ordenamiento automático en `DynamicController.js` cuando no hay `sortField` del usuario. Utiliza la PK definida en metadatos o detecta campos ID comunes, evitando que PostgreSQL reordene filas tras un UPDATE.
 - **Persistencia de Columna Enfocada:** Tras un guardado inline, el cursor vuelve a la **misma columna** donde estaba el usuario (antes saltaba al checkbox de selección). Se implementó mediante un nuevo ref `pendingSelectCol`.
+
+## [2026-03-14] - Implementación de Maestro-Detalle Explícito y Diagnóstico Premium
+
+### Enlace Maestro-Detalle Basado en Metadatos (`masterdetail`)
+- **Configuración Explícita:** Se introdujo el campo `masterdetail` en la tabla `XGRID` para definir relaciones llave-a-llave de forma manual.
+    - **Formato:** `campo_maestro:campo_detalle` (ej: `idacademia:idcurso`).
+    - **Prioridad:** Este modo prevalece sobre la detección automática (heurística), permitiendo enlazar tablas con nombres de IDs discordantes.
+- **Pre-población Automática:** Al agregar un nuevo registro en una grilla detalle, el sistema ahora pre-llena automáticamente la llave foránea basándose en el valor seleccionado en el maestro, garantizando la integridad de los datos sin scripts adicionales.
+- **Normalización de Base de Datos:** Migración exitosa de las columnas anteriores (`master_key`, `detail_key`) a un único campo consolidado `masterdetail` en la estructura central.
+
+### Diagnóstico de Errores para Desarrolladores (Premium Error Panel)
+- **Traductor de Errores SQL (Backend):** Implementación de `handleDbError` en `DynamicController.js`. Traduce los crípticos códigos nativos de PostgreSQL (42703, 42P01, etc.) a mensajes en español y accionables (ej: avisar exactamente qué columna falta o qué tabla no existe).
+- **Panel de Superposición (Frontend):** 
+    - Se reemplazaron las alertas genéricas por un panel de diagnóstico de alta fidelidad que aparece sobre la grilla.
+    - **Aesthetics:** Utiliza desenfoque de fondo (`backdrop-filter: blur`), tipografía de precisión y sombras suaves.
+    - **Interacción:** Incluye un botón de "Reintentar" que permite refrescar la grilla inmediatamente tras corregir el metadato en la base de datos, optimizando el flujo de desarrollo.
+- **Validación Proactiva:** El sistema ahora verifica antes de cada petición si los campos configurados en `masterdetail` existen en el registro seleccionado, alertando por consola en caso de inconsistencia.
+
+### Actualización de Manuales
+- **Documentación Técnica:** Se actualizaron `LOGICA_FRAMEWORK.md` y `MANUAL_DEL_FRAMEWORK.md` con las nuevas especificaciones del campo `masterdetail` y la nueva jerarquía de errores.
+
+## [2026-03-14] - Control de Acceso Basado en Roles (RBAC) con Niveles Numéricos
+
+### Jerarquía de Niveles Técnicos (`xroles.tipo`)
+- **Estandarización Numérica:** Se implementó una columna `tipo` (integer) en la tabla `XROLES` para categorizar los niveles de acceso de forma técnica, eliminando la dependencia de nombres de roles "quemados" en el código:
+    - **0 (Developer):** Acceso total, visualización de registros eliminados y herramientas de programador.
+    - **1 (Administrador):** Gestión de usuarios/roles y visualización de registros eliminados.
+    - **2 (Usuario Final):** Operativa estándar basada en la matriz de permisos.
+    - **3 (Invitado):** Acceso restringido o de solo lectura.
+- **Migración de Datos:** Se ejecutó un script de migración para asignar estos niveles a los roles existentes (`ADMINISTRADOR`, `DEVELOPER`, `INVITADO`, etc.).
+
+### Seguridad y Backend
+- **Integración JWT:** El nivel numérico (`tipo`) se inyecta ahora directamente en el token JWT durante el login (`AuthController.js`). Esto permite al frontend conocer el nivel de privilegio del usuario de forma instantánea y síncrona.
+- **Gestión de Roles Pro:** El backend ahora soporta la creación y edición del campo `tipo` desde el controlador de administración.
+
+### Interfaz de Gestión de Roles (`RoleManager.jsx`)
+- **Edición de Roles Existentes:** Se habilitó la capacidad de editar la descripción y el nivel (`tipo`) de los roles del sistema directamente desde la interfaz, sin necesidad de recrearlos.
+- **Selector de Niveles:** Incorporación de un componente `Select` en el formulario de roles para asignar jerarquías mediante etiquetas amigables (ej: "Administrador").
+- **Identificación Visual:** La lista de roles ahora muestra etiquetas de color (_Chips_) que indican el nivel técnico de cada rol para una auditoría visual rápida.
+
+### Control Dinámico de UI
+- **Menú Inteligente (`DynamicMenu.jsx`):** La visibilidad de secciones críticas como "Programador" o "Configuración" ahora depende exclusivamente del nivel numérico (`isAdmin`, `isDeveloper`), simplificando significativamente el código de filtrado de menús.
+- **Acceso a Papelera de Reciclaje:** Se automatizó en `DynamicGrid.jsx` la visibilidad de la opción "Ver registros eliminados", basándose en el nivel privilegio del usuario (`tipo <= 1`).
+
+### Documentación y Manuales
+- **Actualización de Diccionario:** Registro de los nuevos metadatos y lógica de jerarquías en `LOGICA_FRAMEWORK.md`.
+- **Manual del Programador:** Sección dedicada a RBAC en `MANUAL_DEL_FRAMEWORK.md` explicando la nueva arquitectura de niveles numéricos.
+
+## [2026-03-14] - Implementación de Valores por Defecto Dinámicos (valxdefecto)
+
+### Motor de Expresiones (`evalExpression`)
+- **Evaluación Asíncrona:** Implementación de un motor de interpretación basado en promesas que permite ejecutar JavaScript seguro desde la base de datos para inicializar campos.
+- **Funciones Nativas Integradas:** Inyección de ayudantes globales: `date()` (fecha actual), `time()` (hora actual), `user()` (datos de sesión).
+
+### Puente de Interfaz (UI Bridge)
+- **Integración con Cabecera:** Soporte para la sintaxis `ui.header.id_elemento`, permitiendo que un campo por defecto dependa de valores ingresados en objetos HTML personalizados de la cabecera del grid.
+- **Contexto de Datos:** Acceso inmediato a objetos `master` (registro padre) y `user` para decisiones dinámicas de inicialización.
+
+### Optimización de Metadatos
+- **Simplificación de Scripts:** Migración de lógicas de inicialización desde `snewrecord` (script de grilla) hacia `valxdefecto` (propiedad de campo), permitiendo una mejor reutilización de componentes y metadatos limpios.
+- **Actualización de Manuales:** Documentación detallada de la sintaxis y capacidades de `valxdefecto` en `LOGICA_FRAMEWORK.md` y `MANUAL_DEL_FRAMEWORK.md`.

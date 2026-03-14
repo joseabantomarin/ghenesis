@@ -12,8 +12,22 @@ import axios from 'axios';
 import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry, AllCommunityModule, themeQuartz } from 'ag-grid-community';
 import ConfirmDialog from './ConfirmDialog';
+import {
+    Edit as EditIcon,
+    Visibility as VisibilityIcon,
+    DeleteSweep as DeleteSweepIcon
+} from '@mui/icons-material';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
+
+// Tipos de categoría para mostrar en la grilla (XFORMS.tipo)
+const TIPO_LABELS = { 0: 'Programador', 1: 'General', 2: 'Operaciones', 3: 'Reportes', 4: 'Sistema' };
+
+// Niveles de acceso (XROLES.tipo)
+const ROLE_LEVELS = { 0: 'Developer', 1: 'Administrador', 2: 'Usuario Final', 3: 'Invitado' };
+
+// Roles protegidos que no se pueden eliminar
+const PROTECTED_ROLE_IDS = [1, 2, 3];
 
 const gridTheme = themeQuartz.withParams({
     headerBackgroundColor: 'var(--grid-header-bg)',
@@ -29,9 +43,6 @@ const gridTheme = themeQuartz.withParams({
     iconButtonHoverBackgroundColor: 'transparent'
 });
 
-// Roles protegidos que no se pueden eliminar
-const PROTECTED_ROLE_IDS = [1, 2, 3];
-
 const RoleManager = () => {
     const gridRef = useRef();
     const [roles, setRoles] = useState([]);
@@ -41,18 +52,51 @@ const RoleManager = () => {
     const [permLoading, setPermLoading] = useState(false);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [confirmOpen, setConfirmOpen] = useState(false);
-    const [roleForm, setRoleForm] = useState({ rolename: '', descripcion: '' });
+    const [roleForm, setRoleForm] = useState({ idrole: null, rolename: '', descripcion: '', tipo: 2 });
     const [dirty, setDirty] = useState(false);
 
-    // Tipos de categoría para mostrar en la grilla
-    const tipoLabels = { 0: 'Programador', 1: 'General', 2: 'Operaciones', 3: 'Reportes', 4: 'Sistema' };
+    const fetchRoles = async () => {
+        setLoading(true);
+        try {
+            const res = await axios.get('/api/auth/roles');
+            if (res.data.success) setRoles(res.data.data);
+        } catch (e) {
+            console.error('Error loading roles', e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchPermissions = async (idrole) => {
+        setPermLoading(true);
+        try {
+            const res = await axios.get(`/api/auth/roles/${idrole}/permissions`);
+            if (res.data.success) {
+                setPermissions(res.data.data);
+                setDirty(false);
+            }
+        } catch (e) {
+            console.error('Error loading permissions', e);
+        } finally {
+            setPermLoading(false);
+        }
+    };
+
+    const updatePermission = (idform, field, value) => {
+        setPermissions(prev => prev.map(p =>
+            p.idform === idform ? { ...p, [field]: value } : p
+        ));
+        setDirty(true);
+        // Refrescar la grilla
+        gridRef.current?.api?.refreshCells({ force: true });
+    };
 
     const columnDefs = useMemo(() => [
         { field: 'idform', headerName: 'ID', width: 70 },
         { field: 'module_name', headerName: 'Módulo', flex: 1, minWidth: 200 },
         {
             field: 'tipo', headerName: 'Categoría', width: 130,
-            valueFormatter: (params) => tipoLabels[params.value] || 'Otro'
+            valueFormatter: (params) => TIPO_LABELS[params.value] || 'Otro'
         },
         {
             field: 'invitado', headerName: 'Invitado', width: 110,
@@ -92,48 +136,12 @@ const RoleManager = () => {
         }
     ], [permissions]);
 
-    const fetchRoles = async () => {
-        setLoading(true);
-        try {
-            const res = await axios.get('/api/auth/roles');
-            if (res.data.success) setRoles(res.data.data);
-        } catch (e) {
-            console.error('Error loading roles', e);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const fetchPermissions = async (idrole) => {
-        setPermLoading(true);
-        try {
-            const res = await axios.get(`/api/auth/roles/${idrole}/permissions`);
-            if (res.data.success) {
-                setPermissions(res.data.data);
-                setDirty(false);
-            }
-        } catch (e) {
-            console.error('Error loading permissions', e);
-        } finally {
-            setPermLoading(false);
-        }
-    };
-
     useEffect(() => { fetchRoles(); }, []);
 
     const handleSelectRole = (role) => {
         if (dirty && !window.confirm('Hay cambios sin guardar. ¿Descartar?')) return;
         setSelectedRole(role);
         fetchPermissions(role.idrole);
-    };
-
-    const updatePermission = (idform, field, value) => {
-        setPermissions(prev => prev.map(p =>
-            p.idform === idform ? { ...p, [field]: value } : p
-        ));
-        setDirty(true);
-        // Refrescar la grilla
-        gridRef.current?.api?.refreshCells({ force: true });
     };
 
     const handleSavePermissions = async () => {
@@ -160,7 +168,17 @@ const RoleManager = () => {
     };
 
     const openNewRole = () => {
-        setRoleForm({ rolename: '', descripcion: '' });
+        setRoleForm({ idrole: null, rolename: '', descripcion: '', tipo: 2 });
+        setDialogOpen(true);
+    };
+
+    const openEditRole = (role) => {
+        setRoleForm({ 
+            idrole: role.idrole, 
+            rolename: role.rolename, 
+            descripcion: role.descripcion || '', 
+            tipo: role.tipo !== undefined ? role.tipo : 2 
+        });
         setDialogOpen(true);
     };
 
@@ -215,6 +233,11 @@ const RoleManager = () => {
                             sx={{ border: '1px solid', borderColor: 'divider', borderRadius: '8px' }}>
                             <AddIcon fontSize="small" />
                         </IconButton>
+                        <IconButton size="small" color="primary" onClick={() => selectedRole && openEditRole(selectedRole)}
+                            disabled={!selectedRole}
+                            sx={{ border: '1px solid', borderColor: 'divider', borderRadius: '8px' }}>
+                            <EditIcon fontSize="small" />
+                        </IconButton>
                         <IconButton size="small" color="error" onClick={handleDeleteRole}
                             disabled={!selectedRole || PROTECTED_ROLE_IDS.includes(selectedRole?.idrole)}
                             sx={{ border: '1px solid', borderColor: 'divider', borderRadius: '8px' }}>
@@ -248,8 +271,14 @@ const RoleManager = () => {
                                     secondaryTypographyProps={{ fontSize: '0.75rem', noWrap: true }}
                                 />
                                 {PROTECTED_ROLE_IDS.includes(role.idrole) && (
-                                    <Chip label="Sistema" size="small" variant="outlined" sx={{ fontSize: '0.65rem', height: 20 }} />
+                                    <Chip label="Sistema" size="small" variant="outlined" sx={{ fontSize: '0.65rem', height: 20, ml: 0.5 }} />
                                 )}
+                                <Chip 
+                                    label={ROLE_LEVELS[role.tipo] || 'Usuario'} 
+                                    size="small" 
+                                    color={role.tipo === 0 ? "secondary" : role.tipo === 1 ? "primary" : "default"}
+                                    sx={{ fontSize: '0.65rem', height: 20, ml: 0.5 }} 
+                                />
                             </ListItemButton>
                         ))
                     )}
@@ -309,14 +338,24 @@ const RoleManager = () => {
             {/* Dialog Nuevo Rol */}
             <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="xs" fullWidth
                 PaperProps={{ sx: { borderRadius: '16px' } }}>
-                <DialogTitle sx={{ fontWeight: 'bold', pb: 1 }}>Nuevo Rol</DialogTitle>
+                <DialogTitle sx={{ fontWeight: 'bold', pb: 1 }}>{roleForm.idrole ? 'Editar Rol' : 'Nuevo Rol'}</DialogTitle>
                 <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '12px !important' }}>
                     <TextField label="Nombre del Rol" value={roleForm.rolename} required size="small"
+                        disabled={PROTECTED_ROLE_IDS.includes(roleForm.idrole)}
                         onChange={e => setRoleForm({ ...roleForm, rolename: e.target.value })}
                         InputProps={{ sx: { borderRadius: '10px' } }}
-                        helperText="Se guardará en mayúsculas"
+                        helperText={PROTECTED_ROLE_IDS.includes(roleForm.idrole) ? "Roles de sistema no pueden renombrarse" : "Se guardará en mayúsculas"}
                     />
-                    <TextField label="Descripción" value={roleForm.descripcion} size="small"
+                    <TextField label="Nivel / Tipo" value={roleForm.tipo} size="small" select
+                        onChange={e => setRoleForm({ ...roleForm, tipo: parseInt(e.target.value) })}
+                        InputProps={{ sx: { borderRadius: '10px' } }}
+                        SelectProps={{ native: true }}
+                    >
+                        {Object.entries(ROLE_LEVELS).map(([val, label]) => (
+                            <option key={val} value={val}>{label}</option>
+                        ))}
+                    </TextField>
+                    <TextField label="Descripción" value={roleForm.descripcion} size="small" multiline rows={2}
                         onChange={e => setRoleForm({ ...roleForm, descripcion: e.target.value })}
                         InputProps={{ sx: { borderRadius: '10px' } }}
                     />

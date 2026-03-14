@@ -7,8 +7,11 @@ import AlertDialog from './AlertDialog';
 import { runGridScript } from '../utils/ScriptingEngine';
 import axios from 'axios';
 
-const DynamicView = ({ idform }) => {
+import { useAuth } from '../context/AuthContext';
+
+const DynamicView = ({ idform, isActive }) => {
     const { getFormDefinition, runFormEvent, permissions } = useMetadata();
+    const { user } = useAuth();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
@@ -40,13 +43,29 @@ const DynamicView = ({ idform }) => {
             setMeta(definition);
 
             // Disparar Evento Sactivate en el servidor
-            if (definition && definition.form.sactivate) {
-                const activationResult = await runFormEvent(idform, 'sactivate', { userId: 'admin' });
-                if (activationResult) setSactivateData(activationResult);
+            // Lo disparamos al cargar Y cada vez que la pestaña se vuelve activa si ya estaba cargada
+            if (definition && definition.form.sactivate && isActive) {
+                const activationResult = await runFormEvent(idform, 'sactivate', { userId: user?.username || 'admin' });
+                if (activationResult) {
+                    setSactivateData(activationResult);
+                    
+                    // Si el script retorna comandos de UI (alertas, notificaciones), los procesamos
+                    if (activationResult.alert) {
+                        setAlertConfig({
+                            open: true,
+                            title: activationResult.alert.title || 'Aviso del Sistema',
+                            message: activationResult.alert.message || '',
+                            severity: activationResult.alert.severity || 'info'
+                        });
+                    }
+                    if (activationResult.notify) {
+                        console.log("[Ghenesis Sactivate]", activationResult.notify);
+                    }
+                }
             }
 
             // Si es modo VENTANA, ejecutar el script "ejecuta" de la primera grilla
-            if (definition?.form?.ventana && definition.grids && definition.grids.length > 0) {
+            if (definition?.form?.ventana && definition.grids && definition.grids.length > 0 && isActive) {
                 const firstGrid = definition.grids[0];
                 if (firstGrid.ejecuta) {
                     // Esperar un micro-tick para asegurar que el DOM de cabecera esté listo si el script lo manipula
@@ -72,10 +91,13 @@ const DynamicView = ({ idform }) => {
 
             setLoading(false);
         };
+        
         if (idform) {
             loadMeta();
-            setActiveTab(0);
-            setSelectedMasterRecord(null);
+            if (isActive) {
+                setActiveTab(0);
+                setSelectedMasterRecord(null);
+            }
         }
 
         const handleOpenReport = (e) => {
@@ -85,7 +107,7 @@ const DynamicView = ({ idform }) => {
         };
         window.addEventListener('open-report', handleOpenReport);
         return () => window.removeEventListener('open-report', handleOpenReport);
-    }, [idform]);
+    }, [idform, isActive]);
 
     // 1. Separar las grillas maestras (Top-Level) de los detalles
     const masterGrids = useMemo(() => {

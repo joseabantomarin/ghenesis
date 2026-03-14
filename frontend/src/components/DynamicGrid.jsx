@@ -18,7 +18,7 @@ import DynamicForm from './DynamicForm';
 import ConfirmDialog from './ConfirmDialog';
 import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry, AllCommunityModule, themeQuartz } from 'ag-grid-community';
-import { runGridScript } from '../utils/ScriptingEngine';
+import { runGridScript, evalExpression } from '../utils/ScriptingEngine';
 import { formatNumber, formatDate } from '../utils/formatters';
 import AlertDialog from './AlertDialog';
 import MemoEditorDialog from './MemoEditorDialog';
@@ -203,9 +203,20 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
     }, []);
     // --- Helper Memos y Callbacks (Definidos antes de ser usados en effects) ---
     const isDeveloper = useMemo(() => {
-        const role = user?.role?.toUpperCase() || '';
+        if (user?.tipo !== undefined && user?.tipo !== null) {
+            return user.tipo === 0;
+        }
+        const role = (user?.role || user?.rolename || '').toUpperCase();
         return role === 'DEVELOPER' || role === 'PROGRAMADOR';
     }, [user]);
+
+    const isAdmin = useMemo(() => {
+        if (user?.tipo !== undefined && user?.tipo !== null) {
+            return user.tipo <= 1; // 0 o 1
+        }
+        const role = (user?.role || user?.rolename || '').toUpperCase();
+        return role === 'ADMIN' || role === 'ADMINISTRADOR' || isDeveloper;
+    }, [user, isDeveloper]);
 
     const detectPK = useMemo(() => {
         return (record) => {
@@ -241,6 +252,63 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
         };
     }, [detectPK]);
 
+    // Helper para obtener información de relación Maestro-Detalle
+    const getMasterPkInfo = React.useCallback(() => {
+        if (!gridMeta.gparent || !masterRecord) return null;
+
+        // 0. Prioridad Total: Metadatos explícitos en XGRID (Formato key_master:key_detail)
+        if (gridMeta.masterdetail && gridMeta.masterdetail.includes(':')) {
+            const [mKey, dKey] = gridMeta.masterdetail.split(':').map(s => s.trim());
+            if (mKey && dKey) {
+                const mValue = masterRecord[mKey];
+                if (mValue === undefined) {
+                    console.error(`⚠️ Configuración MasterDetail Errónea: El campo maestro '${mKey}' no existe en el registro seleccionado.`);
+                }
+                return {
+                    masterField: mKey, // Campo en el padre
+                    detailField: dKey, // Campo en el hijo (FK)
+                    value: mValue,
+                    payload: masterRecord
+                };
+            }
+        }
+
+        let masterPkField = null;
+
+        // 1. Intentar encontrar el Meta del Grid Padre para obtener su PK real configurada
+        if (allGrids) {
+            const parentGrid = allGrids.find(g => g.idgrid === gridMeta.gparent);
+            if (parentGrid && parentGrid.fields) {
+                // Buscar el campo marcado como PK en el padre
+                masterPkField = parentGrid.fields.find(f => f.pk === true)?.campo;
+
+                // Si no hay PK marcado, intentar adivinar basado en el nombre del padre (ej: xforms -> idform)
+                if (!masterPkField && parentGrid.vquery) {
+                    const vquery = parentGrid.vquery.toLowerCase();
+                    const tableName = vquery.replace(/^x/, '').replace(/s$/, '');
+                    const candidate = `id${tableName}`;
+                    if (masterRecord[candidate] !== undefined) masterPkField = candidate;
+                }
+            }
+        }
+
+        // 2. Fallback a la jerarquía si no se pudo determinar por metadata del padre
+        if (!masterPkField) {
+            const pkHierarchy = ['idfield', 'idcontrol', 'idgrid', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'iduser', 'idrole', 'idacademia', 'idcurso', 'idform', 'idsistema', 'id'];
+            masterPkField = pkHierarchy.find(key => masterRecord[key] !== undefined) || (masterRecord && Object.keys(masterRecord)[0]);
+        }
+
+        if (masterPkField) {
+            return {
+                masterField: masterPkField, 
+                detailField: masterPkField, // Por defecto se asume que se llaman igual (ej: idform -> idform)
+                value: masterRecord[masterPkField],
+                payload: masterRecord
+            };
+        }
+        return null;
+    }, [gridMeta.gparent, masterRecord, allGrids]);
+
     const fetchData = React.useCallback(async (silent = false) => {
         if (gridMeta.gparent && !masterRecord) {
             setData([]);
@@ -260,35 +328,11 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                 ...extraParams
             };
 
-            if (gridMeta.gparent && masterRecord) {
-                let masterPkField = null;
-
-                // 1. Intentar encontrar el Meta del Grid Padre para obtener su PK real configurada
-                if (allGrids) {
-                    const parentGrid = allGrids.find(g => g.idgrid === gridMeta.gparent);
-                    if (parentGrid && parentGrid.fields) {
-                        // Buscar el campo marcado como PK en el padre
-                        masterPkField = parentGrid.fields.find(f => f.pk === true)?.campo;
-
-                        // Si no hay PK marcado, intentar adivinar basado en el nombre del padre (ej: xforms -> idform)
-                        if (!masterPkField && parentGrid.vquery) {
-                            const vquery = parentGrid.vquery.toLowerCase();
-                            const tableName = vquery.replace(/^x/, '').replace(/s$/, '');
-                            const candidate = `id${tableName}`;
-                            if (masterRecord[candidate] !== undefined) masterPkField = candidate;
-                        }
-                    }
-                }
-
-                // 2. Fallback a la jerarquía si no se pudo determinar por metadata del padre
-                if (!masterPkField) {
-                    const pkHierarchy = ['idfield', 'idcontrol', 'idgrid', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'iduser', 'idrole', 'idacademia', 'idcurso', 'idform', 'idsistema', 'id'];
-                    masterPkField = pkHierarchy.find(key => masterRecord[key] !== undefined) || Object.keys(masterRecord)[0];
-                }
-
-                params.masterField = masterPkField;
-                params.masterValue = masterRecord[masterPkField];
-                params.masterRecordPayload = JSON.stringify(masterRecord);
+            const masterInfo = getMasterPkInfo();
+            if (masterInfo) {
+                params.masterField = masterInfo.detailField;
+                params.masterValue = masterInfo.value;
+                params.masterRecordPayload = JSON.stringify(masterInfo.payload);
             }
 
             // Si hay un registro pendiente de localizar, agregar params para que el backend calcule la página
@@ -313,11 +357,12 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                         setPage(serverPage);
                     }
                 }
+                setError(null); // Limpiar error si fue exitoso
             } else {
                 setError(res.data.error || 'Error fetching grid data');
             }
         } catch (err) {
-            setError(err.message);
+            setError(err.response?.data?.error || err.message);
         } finally {
             if (!silent) setLoading(false);
             isSaving.current = false;
@@ -499,7 +544,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
 
     const handleCellDoubleClicked = React.useCallback((params) => {
         const fieldMeta = (gridMeta.fields || []).find(f => f.campo === params.colDef.field);
-        if (fieldMeta && fieldMeta.tipod === 'W' && !readonlyMode && !simplified) {
+        if (fieldMeta && fieldMeta.tipod === 'W' && !readonlyMode) {
             setMemoEditor({
                 open: true,
                 campo: fieldMeta.campo,
@@ -709,9 +754,9 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                     if (f.tipod === 'W') return false;
 
                     // De lo contrario, seguir la lógica normal del componente
-                    return !simplified && !readonlyMode;
+                    return !readonlyMode;
                 },
-                filter: (f.tipod === 'I' || f.tipod === 'F') ? 'agNumberColumnFilter' : (!f.calculado && !simplified),
+                filter: (f.tipod === 'I' || f.tipod === 'F') ? 'agNumberColumnFilter' : (!f.calculado),
                 filterValueGetter: (params) => {
                     const val = params.data?.[f.campo];
                     if (f.comboDataKeyVal && val !== undefined && f.comboDataKeyVal[String(val)]) {
@@ -744,7 +789,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                         'notEqual', 'lessThan', 'lessThanOrEqual', 'greaterThan', 'greaterThanOrEqual', 'inRange'
                     ]
                 } : (f.tipod === 'D' ? {} : undefined),
-                sortable: !f.calculado && !simplified,
+                sortable: !f.calculado,
                 comparator: (valueA, valueB, nodeA, nodeB) => {
                     let labelA = String(valueA || '');
                     let labelB = String(valueB || '');
@@ -1216,8 +1261,50 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
     };
 
     const handleAddRecord = async () => {
-        const newRecordContext = {};
-        // Dispara snewrecord pasando un objeto en blanco para que el script pueda inyectar valores por defecto
+        let newRecordContext = { __isNew: true };
+
+        // 1. Inyectar valor del maestro por defecto si es una grilla detalle
+        const masterInfo = getMasterPkInfo();
+        if (masterInfo) {
+            newRecordContext[masterInfo.detailField] = masterInfo.value;
+        }
+
+        // 2. Aplicar valxdefecto de los metadatos (XFIELD)
+        if (gridMeta.fields) {
+            const uiBridge = {
+                getValue: (id) => {
+                    const el = document.getElementById(id);
+                    if (!el) return null;
+                    return el.value !== undefined ? el.value : el.innerText;
+                },
+                // Permite usar ui.header.mi_valor en lugar de ui.getValue('mi_valor')
+                header: new Proxy({}, {
+                    get: (target, prop) => {
+                        if (typeof prop === 'string') return uiBridge.getValue(prop);
+                        return undefined;
+                    }
+                })
+            };
+
+            const evalContext = {
+                ui: uiBridge,
+                master: masterRecord,
+                record: newRecordContext,
+                user: user,
+                api: axios
+            };
+
+            for (const f of gridMeta.fields) {
+                if (f.valxdefecto && (newRecordContext[f.campo] === undefined || newRecordContext[f.campo] === null)) {
+                    const solvedVal = await evalExpression(f.valxdefecto, evalContext);
+                    if (solvedVal !== null && solvedVal !== undefined) {
+                        newRecordContext[f.campo] = solvedVal;
+                    }
+                }
+            }
+        }
+
+        // 3. Dispara snewrecord pasando el objeto pre-rellenado para que el script pueda inyectar más valores por defecto
         const continuable = await dispatchGridEvent('snewrecord', { record: newRecordContext });
         if (continuable) {
             setEditingRecord(newRecordContext);
@@ -1308,13 +1395,11 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                 ...(gridFilters && { filters: JSON.stringify(gridFilters) })
             };
 
-            if (gridMeta.gparent && masterRecord) {
-                const pkHierarchy = ['idfield', 'idcontrol', 'idgrid', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'iduser', 'idrole', 'idacademia', 'idcurso', 'idform', 'idsistema', 'id'];
-                const masterPkField = pkHierarchy.find(key => masterRecord[key] !== undefined) || Object.keys(masterRecord)[0];
-
-                params.masterField = masterPkField;
-                params.masterValue = masterRecord[masterPkField];
-                params.masterRecordPayload = JSON.stringify(masterRecord);
+            const masterInfo = getMasterPkInfo();
+            if (masterInfo) {
+                params.masterField = masterInfo.detailField;
+                params.masterValue = masterInfo.value;
+                params.masterRecordPayload = JSON.stringify(masterInfo.payload);
             }
 
             const res = await axios.get(`/api/dynamic/data/${idform}/${gridMeta.idgrid}`, { params });
@@ -1546,7 +1631,6 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
         }
     };
 
-    if (error) return <Alert severity="error">{error}</Alert>;
 
     if (editingRecord) {
         return (
@@ -1756,7 +1840,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                                         Guardar interfaz
                                     </MenuItem>
                                 )}
-                                {(isDeveloper || user?.role?.toUpperCase() === 'ADMIN' || user?.role?.toUpperCase() === 'ADMINISTRADOR') && (
+                                {isAdmin && (
                                     <MenuItem onClick={handleToggleDeleted} sx={{ color: showDeleted ? 'primary.main' : 'inherit' }}>
                                         {showDeleted ? <Icons.Visibility /> : <Icons.DeleteSweep />}
                                         <Typography sx={{ ml: 1 }}>
@@ -1825,6 +1909,35 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                 {loading && (
                     <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255, 255, 255, 0.1)' }}>
                         <CircularProgress />
+                    </Box>
+                )}
+                {error && (
+                    <Box sx={{ 
+                        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, 
+                        zIndex: 11,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                        backgroundColor: 'rgba(255, 255, 255, 0.65)',
+                        backdropFilter: 'blur(3px)',
+                        p: 3
+                    }}>
+                        <Paper elevation={8} sx={{ p: 4, maxWidth: 500, border: '1px solid', borderColor: 'error.light', borderRadius: 4, textAlign: 'center' }}>
+                             <Icons.ReportProblem color="error" sx={{ fontSize: 60, mb: 2, opacity: 0.9 }} />
+                             <Typography variant="h6" color="error.main" fontWeight="800" gutterBottom>
+                                ERROR DE CONFIGURACIÓN
+                             </Typography>
+                             <Typography variant="body1" sx={{ mb: 3, color: 'text.secondary', fontWeight: 500, lineHeight: 1.5 }}>
+                                {error}
+                             </Typography>
+                             <Button 
+                                variant="contained" 
+                                color="error" 
+                                onClick={() => fetchData()} 
+                                startIcon={<RefreshIcon />}
+                                sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 'bold', px: 4, py: 1, boxShadow: 3 }}
+                             >
+                                Reintentar / Actualizar
+                             </Button>
+                        </Paper>
                     </Box>
                 )}
                 <Box sx={{
@@ -2047,9 +2160,9 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                         pinnedBottomRowData={pinnedBottomRowData}
                         defaultColDef={{
                             sortable: true,
-                            filter: !simplified,
+                            filter: true,
                             floatingFilter: !simplified,
-                            resizable: !simplified,
+                            resizable: true,
                             unSortIcon: false,
                             cellClassRules: {
                                 'cell-dirty': (params) => {

@@ -13,32 +13,66 @@ class ScriptingService {
             return { success: true, message: 'Script Vacío' };
         }
 
+        // Objeto para capturar comandos de UI asíncronos o síncronos dentro del script
+        const capturedUI = { alert: null, notify: null };
+
         try {
             const sandbox = {
                 db,
                 console,
-                params: contextParams
+                params: contextParams,
+                ui: {
+                    alert: (title, message, severity = 'info') => {
+                        capturedUI.alert = { title, message, severity };
+                    },
+                    notify: (msg) => {
+                        capturedUI.notify = msg;
+                    }
+                }
             };
             vm.createContext(sandbox);
 
-            // Enolvemos el código de Sactivate/Snewrecord que escribió el programador
-            // para que tenga disponible "await", inyectándole los "params" recibidos.
+            // Envolvemos el código de Sactivate/Snewrecord que escribió el programador
             const wrapper = `
-                (async function(params) {
-                    ${scriptCode}
+                (async function(params, ui) {
+                    try {
+                        ${scriptCode}
+                    } catch (e) {
+                        return { _error: e.message };
+                    }
                 })
             `;
 
-            // Compila y obtiene la referencia a la función asíncrona virtual
+            // Compila
             const asyncExecutable = vm.runInContext(wrapper, sandbox);
 
-            // La ejecutamos inyectandole la huella del request web
-            const executionResult = await asyncExecutable(contextParams);
+            // Ejecuta
+            const executionResult = await asyncExecutable(contextParams, sandbox.ui);
 
-            return executionResult;
+            // Si el script retornó un error interno lo lanzamos
+            if (executionResult && executionResult._error) {
+                throw new Error(executionResult._error);
+            }
+
+            // Mezclar el resultado del return con lo capturado por el objeto ui
+            // Priorizamos el return explícito si existe y es un objeto
+            let finalResult = executionResult;
+            if (typeof executionResult !== 'object' || executionResult === null) {
+                finalResult = {};
+            }
+
+            return {
+                ...finalResult,
+                alert: finalResult.alert || capturedUI.alert,
+                notify: finalResult.notify || capturedUI.notify
+            };
 
         } catch (error) {
             console.error('❌ Error executing Sandbox Script:', error);
+            // Si es un error de sintaxis (ej: por etiquetas HTML en el script), damos un mensaje claro
+            if (error instanceof SyntaxError || error.message.includes('Unexpected token')) {
+                throw new Error(`Error de Sintaxis en el Script (posiblemente contiene HTML o caracteres inválidos): ${error.message}`);
+            }
             throw new Error(`Script Execution Error: ${error.message}`);
         }
     }

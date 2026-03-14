@@ -2,6 +2,31 @@ const MetadataService = require('../services/MetadataService');
 const ScriptingService = require('../services/ScriptingService');
 const db = require('../config/db');
 
+// Traductor de errores de base de datos para guiar al desarrollador
+const handleDbError = (err, context = '') => {
+    let msg = `Error en el motor: ${err.message}`;
+    
+    // Postgres Error Codes
+    if (err.code === '42703') { // undefined_column
+        const match = err.message.match(/column "(.*)" does not exist/);
+        const col = match ? match[1] : 'desconocida';
+        msg = `Configuración incorrecta: La columna '${col}' no existe en la tabla o vista configurada${context ? ' (' + context + ')' : ''}. Revisa el nombre en XFIELD o el enlace MasterDetail.`;
+    } else if (err.code === '42P01') { // undefined_table
+        const match = err.message.match(/relation "(.*)" does not exist/);
+        const table = match ? match[1] : 'desconocida';
+        msg = `Tabla no encontrada: La relación '${table}' no existe en la base de datos. Verifica el valor de VQUERY o el nombre físico en la tabla XGRID.`;
+    } else if (err.code === '42883') { // undefined_function
+        msg = `Error de tipos: No se puede comparar o convertir los campos. Revisa si un campo numérico tiene texto o el formato de fecha.`;
+    } else if (err.code === '23505') { // unique_violation
+        msg = `Error de duplicidad: Ya existe un registro con ese valor único.`;
+    } else if (err.code === '23502') { // not_null_violation
+        msg = `Campo obligatorio: Falta completar un campo requerido en la base de datos.`;
+    }
+
+    return msg;
+};
+
+
 exports.getMenu = async (req, res) => {
     try {
         // Al pedir el menú (típicamente al pulsar F5 o cargar el sistema cerrado), forzamos
@@ -446,7 +471,7 @@ exports.getGridData = async (req, res) => {
                         }
                     });
                 } catch (e) {
-                    return res.status(500).json({ success: false, error: 'Error ejecutando sopen WrapQuery: ' + e.message });
+                    return res.status(500).json({ success: false, error: handleDbError(e, 'sopen WrapQuery') });
                 }
             }
 
@@ -475,7 +500,7 @@ exports.getGridData = async (req, res) => {
             const wrappedResult = await buildWrappedQuery(`SELECT * FROM ${physicalTableOrView}`, [], req.query, gridMeta);
             return res.json({ success: true, ...wrappedResult });
         } catch (e) {
-            return res.status(500).json({ success: false, error: 'Error de BD: ' + e.message });
+            return res.status(500).json({ success: false, error: handleDbError(e, physicalTableOrView) });
         }
 
     } catch (error) {
@@ -602,7 +627,18 @@ exports.saveGridData = async (req, res) => {
                 pkField = metaPkField ? metaPkField.campo : null;
             }
             if (!pkField) {
-                pkField = columns.find(c => c.toLowerCase().startsWith('id') || c.toLowerCase().endsWith('id')) || columns[0];
+                const physicalTable = (gridMeta.nombre || '').toLowerCase();
+                const singularTable = physicalTable.replace(/^x/i, '').replace(/s$/i, '');
+                
+                // Priorizar el que coincida con el nombre de la tabla (ej: XCONTROLS -> idcontrol)
+                pkField = columns.find(c => {
+                    const lower = c.toLowerCase();
+                    return lower === `id${singularTable}` || lower === `${singularTable}id`;
+                });
+
+                if (!pkField) {
+                    pkField = columns.find(c => c.toLowerCase().startsWith('id') || c.toLowerCase().endsWith('id')) || columns[0];
+                }
             }
 
             // Retiramos la llave primaria del SET (comparación insensitive)
@@ -644,8 +680,7 @@ exports.saveGridData = async (req, res) => {
         console.error('❌ Error en saveGridData:', error);
         res.status(500).json({
             success: false,
-            error: error.message,
-            detail: error.detail || 'Error interno del servidor'
+            error: handleDbError(error, gridMeta?.nombre || '')
         });
     }
 };
@@ -682,8 +717,8 @@ exports.deleteGridData = async (req, res) => {
         res.json({ success: true, message: 'Registro(s) movido(s) a papelera' });
 
     } catch (error) {
-        console.error('Error eliminando base de datos:', error);
-        res.status(500).json({ success: false, error: error.message });
+        console.error('❌ Error eliminando datos:', error);
+        res.status(500).json({ success: false, error: handleDbError(error, physicalTable) });
     }
 };
 
@@ -701,7 +736,7 @@ exports.restoreGridData = async (req, res) => {
         await db.query(`UPDATE ${physicalTable} SET updtype = 1 WHERE ${pkField}::text = ANY(STRING_TO_ARRAY($1, ','))`, [id]);
         res.json({ success: true, message: 'Registro(s) restaurado(s) correctamente' });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: handleDbError(error, physicalTable) });
     }
 };
 
@@ -719,7 +754,7 @@ exports.permanentDeleteGridData = async (req, res) => {
         await db.query(`DELETE FROM ${physicalTable} WHERE ${pkField}::text = ANY(STRING_TO_ARRAY($1, ','))`, [id]);
         res.json({ success: true, message: 'Registro(s) eliminado(s) físicamente del sistema' });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: handleDbError(error, physicalTable) });
     }
 };
 
@@ -736,10 +771,10 @@ exports.executeScript = async (req, res) => {
         const metadata = await MetadataService.getFormMetadata(idform);
         if (!metadata) return res.status(404).json({ success: false, error: 'Módulo no existe' });
 
-        // Evaluamos si el script está a nivel FORMS (ej. sactivate) o necesitamos buscar en grids
+        // Evaluamos si el script está a nivel FORMS (ej. sactivate, sclose) o necesitamos buscar en grids
         let scriptCode = null;
 
-        if (event === 'sactivate' || event === 'screate') {
+        if (['sactivate', 'sclose', 'screate'].includes(event)) {
             scriptCode = metadata.form[event];
         } else {
             // Si el evento no es de form (ej. snewrecord, scalcula), tendríamos que saber

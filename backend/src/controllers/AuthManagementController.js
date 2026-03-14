@@ -77,27 +77,27 @@ exports.getRoles = async (req, res) => {
 
 exports.saveRole = async (req, res) => {
     try {
-        const { idrole, rolename, descripcion } = req.body;
+        const { idrole, rolename, descripcion, tipo } = req.body;
 
         if (idrole) {
             // No permitir renombrar roles protegidos
             const protectedRoles = [1, 2, 3]; // ADMINISTRADOR, USUARIO, DEVELOPER
             if (protectedRoles.includes(parseInt(idrole))) {
-                // Solo actualizar descripción, no el nombre
+                // Solo actualizar descripción y tipo, no el nombre
                 await db.query(
-                    'UPDATE XROLES SET descripcion=$1 WHERE idrole=$2',
-                    [descripcion, idrole]
+                    'UPDATE XROLES SET descripcion=$1, tipo=$2 WHERE idrole=$3',
+                    [descripcion, tipo || 2, idrole]
                 );
             } else {
                 await db.query(
-                    'UPDATE XROLES SET rolename=$1, descripcion=$2 WHERE idrole=$3',
-                    [rolename.toUpperCase(), descripcion, idrole]
+                    'UPDATE XROLES SET rolename=$1, descripcion=$2, tipo=$3 WHERE idrole=$4',
+                    [rolename.toUpperCase(), descripcion, tipo || 2, idrole]
                 );
             }
         } else {
             await db.query(
-                'INSERT INTO XROLES (rolename, descripcion) VALUES ($1, $2)',
-                [rolename.toUpperCase(), descripcion]
+                'INSERT INTO XROLES (rolename, descripcion, tipo) VALUES ($1, $2, $3)',
+                [rolename.toUpperCase(), descripcion, tipo || 2]
             );
         }
 

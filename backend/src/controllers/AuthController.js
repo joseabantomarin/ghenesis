@@ -19,7 +19,7 @@ class AuthController {
 
             // Buscar usuario y su rol
             const query = `
-                SELECT u.*, r.rolename 
+                SELECT u.*, r.rolename, r.tipo
                 FROM XUSER u
                 LEFT JOIN XROLES r ON u.idrole = r.idrole
                 WHERE u.username = $1 AND u.active = TRUE
@@ -46,7 +46,8 @@ class AuthController {
                     fullname: user.fullname,
                     email: user.email,
                     idrole: user.idrole,
-                    role: user.rolename
+                    role: user.rolename,
+                    tipo: user.tipo
                 },
                 JWT_SECRET,
                 { expiresIn: '8h' }

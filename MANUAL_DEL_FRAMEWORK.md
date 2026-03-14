@@ -17,9 +17,17 @@ Todo elemento que renderiza la pantalla nace aquí:
 4. **`XFIELD`:** Múltiples registros atados a 1 `XGRID`. Definen cada columna visible, inputs o selectboxes mostrados en el formulario de creación/edición, así como el tipo de campo (`Date`, `Boolean`, `Memo`, `Number`, `SQL Combo`, `Val Combo` cerrado, o `F9 Lookups`).
 
 ## 4. Estructura Maestro-Detalle (Master-Detail Automático)
-Las relaciones de tablas se auto-descubren y renderizan gracias a la propiedad `gparent` del `XGRID`.
+Las relaciones de tablas se renderizan gracias a la propiedad `gparent` del `XGRID`.
 - **Grillas Maestras (`gparent` ES NULL):** Se cargan por defecto al abrir o instanciar un Módulo (forma de Tabs superpuestas).
-- **Grillas Detalle (`gparent` NO ES NULL):** Se mantienen ocultas hasta que el usuario intenta editar un registro en la grilla Padre. En el formulario de Edición, debajo de los campos de texto del Padre, aparecerán estas sub-grillas, las cuales se auto-filtran inyectándoles silenciosamente la Llave Primaria (PK) del registro Padre seleccionado.
+- **Grillas Detalle (`gparent` NO ES NULL):** Aparecen dentro del formulario de edición de su grilla padre.
+
+### 4.1 Configuración de Enlace (Linking)
+Existen dos formas de enlazar el detalle con el maestro:
+
+1.  **Explícita (Recomendado):** Usando el campo **`masterdetail`** en la tabla `XGRID` de la grilla HIJA.
+    - Formato: `campo_maestro:campo_detalle` (ej: `idform:idform` o `idacademia:idcurso`).
+    - El sistema tomará el valor de `campo_maestro` del registro seleccionado y lo usará para filtrar y pre-poblar `campo_detalle` en la hija.
+2.  **Automática (Heurística):** Si `masterdetail` está vacío, el sistema intenta detectar la PK del padre (ej: `id[nombre_tabla]`) y busca un campo con el mismo nombre en la hija.
 
 ## 5. El Sandbox y Scripting
 La verdadera lógica de negocio "on-the-fly" se logra interceptando eventos del ciclo de vida e inyectando código en V8/Sandbox, o JS cliente puro.
@@ -35,6 +43,39 @@ Todo registro en el ecosistema (y preferentemente tablas hijas creadas post-depl
 - **`upduser`**: Login del último usuario en tocar la fila.
 - **`upddate`**: Fecha del evento en motor de BD.
 - **`updtype`**: Mantiene referencialidad lógica y no física (`0`: Insertado, `1`: Actualizado, `2`: Eliminado en papelera).
+
+## 7. Control de Acceso (RBAC)
+Ghenesis implementa un sistema de control de acceso basado en niveles numéricos (`tipo`) en la tabla `XROLES`. Este nivel simplifica la lógica de seguridad y visibilidad sin depender únicamente del nombre del rol.
+
+### 7.1 Jerarquía de Niveles
+- **Nivel 0 - Developer:** Usuario raíz del sistema. Tiene visibilidad de herramientas de programación, depuración y registros marcados como eliminados (`updtype = 2`).
+- **Nivel 1 - Administrador:** Gestión de usuarios y roles. También puede visualizar registros eliminados para tareas de auditoría.
+- **Nivel 2 - Usuario Final:** Operatividad estándar. Su visibilidad está estrictamente dictada por la matriz de permisos configurada en `XPERMISSIONS`. No puede ver registros eliminados.
+- **Nivel 3 - Invitado:** Restricciones máximas o perfiles de visualización básica.
+
+### 7.2 Administración de Niveles
+Desde el módulo **Configuración > Roles**, es posible asignar estos niveles a cada rol creado. El sistema propaga este nivel automáticamente al token JWT del usuario al iniciar sesión, permitiendo validaciones síncronas en el frontend.
+
+## 8. Valores por Defecto Dinámicos (`valxdefecto`)
+El campo `valxdefecto` en `XFIELD` permite inicializar registros con valores calculados automáticamente al momento de presionar "Nuevo".
+
+### 8.1 Tipos de Expresiones Soportadas
+1.  **Constantes**:
+    *   `10`: Valor numérico.
+    *   `'DISPONIBLE'`: Cadena de texto (requiere comillas simples).
+2.  **Funciones Globales**:
+    *   `date()`: Retorna la fecha actual en formato `YYYY-MM-DD`.
+    *   `time()`: Retorna la hora actual en formato `HH:mm:ss`.
+    *   `user()`: Retorna el objeto del usuario actual (ej: `user().username`).
+3.  **Acceso a la Interfaz (UI)**:
+    *   `ui.header.id_elemento`: Permite leer el valor de cualquier elemento HTML con el ID especificado que se encuentre en la cabecera del grid.
+4.  **Contexto Maestro-Detalle**:
+    *   `master.campo`: En grillas detalle, permite heredar valores del registro seleccionado en la grilla maestra.
+5.  **Llamadas Asíncronas (API)**:
+    *   `await api.get('/mi-ruta').then(r => r.data.valor)`: Permite inicializar campos consultando el backend en tiempo real.
+
+### 8.2 Diferencia con `snewrecord`
+Mientras que `snewrecord` es un script global para toda la fila, `valxdefecto` es una propiedad del campo. Se recomienda usar `valxdefecto` para inicializaciones estándar y dejar `snewrecord` para lógica de negocio compleja que involucre múltiples campos o validaciones de estado previas a la edición.
 
 ---
 *(Este manual será expandido iterativamente a medida que refactorizamos y pulimos el entorno del framework)*

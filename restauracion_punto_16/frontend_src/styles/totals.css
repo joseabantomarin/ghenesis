@@ -1,0 +1,19 @@
+/* Estilos para fila de totales en ag-grid */
+.ag-pinned-total-row {
+    background-color: #f0f4f8 !important;
+    font-weight: bold;
+    border-top: 2px solid var(--primary-color, #1976d2);
+}
+
+.ag-pinned-total-row .ag-cell {
+    background-color: #f0f4f8;
+    border-bottom: 1px solid #e0e0e0;
+    padding: 8px 12px;
+    text-align: right;
+}
+
+.ag-pinned-total-row .ag-cell:first-child {
+    text-align: left;
+    font-weight: 600;
+    color: var(--primary-color, #1976d2);
+}

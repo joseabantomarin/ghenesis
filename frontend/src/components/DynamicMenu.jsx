@@ -29,11 +29,11 @@ const DynamicMenu = ({ onItemClick }) => {
     const { menu, permissions } = useMetadata();
     const { user, logout } = useAuth();
     const [openItems, setOpenItems] = useState({
-        'programador': true,
-        'general': true,
-        'operaciones': true,
-        'consultas': true,
-        'configuracion': true,
+        'programador': false,
+        'general': false,
+        'operaciones': false,
+        'consultas': false,
+        'configuracion': false,
         'sistema': true
     });
 
@@ -47,18 +47,17 @@ const DynamicMenu = ({ onItemClick }) => {
         }
     };
 
-    // Determinar el rol del usuario (normalizado a mayúsculas)
-    const userRole = (user?.role || user?.rolename || '').toUpperCase();
-    const isDeveloper = userRole === 'DEVELOPER';
-    const isAdmin = userRole === 'ADMINISTRADOR' || isDeveloper;
+    // Determinar el nivel de acceso del usuario
+    const isDeveloper = user?.tipo === 0 || (user?.role || '').toUpperCase() === 'DEVELOPER';
+    const isAdmin = user?.tipo <= 1 || (user?.role || '').toUpperCase() === 'ADMINISTRADOR' || isDeveloper;
 
     // Filtrar items ocultos según permisos del rol
     const filterHidden = (items) => {
         return items.filter(item => {
             const perm = permissions[item.idform];
             
-            // Si el rol es INVITADO, solo mostrar módulos con check de invitado
-            if (userRole === 'INVITADO') {
+            // Si el nivel es INVITADO (3), solo mostrar módulos con check de invitado
+            if (user?.tipo === 3 || (user?.role || '').toUpperCase() === 'INVITADO') {
                 if (!perm || !perm.invitado) return false;
             }
 
@@ -87,7 +86,7 @@ const DynamicMenu = ({ onItemClick }) => {
                             </ListItemIcon>
                             <ListItemText
                                 primary={item.descripcion || item.cform}
-                                primaryTypographyProps={{ fontSize: '0.875rem', fontWeight: 500 }}
+                                primaryTypographyProps={{ fontSize: '0.875rem', fontWeight: 500, fontFamily: 'Roboto, sans-serif' }}
                             />
                             {openItems[nodeId] ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
                         </ListItemButton>
@@ -177,6 +176,14 @@ const DynamicMenu = ({ onItemClick }) => {
             {/* 4. Configuración — Solo visible para DEVELOPER y ADMINISTRADOR */}
             {isAdmin && (
                 <MenuCategory id="configuracion" label="Configuración" icon={ConfiguracionIcon}>
+                    <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => itemClick('users', 'Usuarios', 'users', 'People')}>
+                        <ListItemIcon sx={{ minWidth: 32 }}><UsersIcon fontSize="small" /></ListItemIcon>
+                        <ListItemText primary="Usuarios" primaryTypographyProps={{ fontSize: '0.875rem' }} />
+                    </ListItemButton>
+                    <ListItemButton sx={{ py: 0.3, pl: 4 }} onClick={() => itemClick('roles', 'Roles', 'roles', 'Shield')}>
+                        <ListItemIcon sx={{ minWidth: 32 }}><RolesIcon fontSize="small" /></ListItemIcon>
+                        <ListItemText primary="Roles" primaryTypographyProps={{ fontSize: '0.875rem' }} />
+                    </ListItemButton>
                     {renderMenuItems(rootsByTipo(4), menu)}
                 </MenuCategory>
             )}

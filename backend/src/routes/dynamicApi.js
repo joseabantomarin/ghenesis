@@ -37,6 +37,9 @@ router.post('/save-interface', DynamicController.saveInterface);
 // 7.1 Ejecutar consulta libre (SELECT) para scripts dinámicos
 router.post('/run-query', DynamicController.runQuery);
 
+// 7.2 Ejecutor de Scripts Dinámicos (Sactivate, Sclose, etc)
+router.post('/run/:idform/:event', DynamicController.executeScript);
+
 // 8. Descargar/Visualizar un reporte en PDF basado en XREPORTS
 router.get('/report/:idreport', ReportController.downloadReportPdf);
 

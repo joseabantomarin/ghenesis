@@ -179,22 +179,36 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
         }
 
         try {
-            const isUpdate = record && Object.keys(record).length > 0;
+            const isUpdate = record && Object.keys(record).length > 0 && !record.__isNew;
             let finalRecordId = null;
             let pkFieldName = null;
 
             if (isUpdate) {
+                // 1. Prioridad: Metadatos explícitos
                 const metaPkField = gridMeta.fields?.find(f => f.pk === true);
                 if (metaPkField && record[metaPkField.campo] !== undefined) {
                     pkFieldName = metaPkField.campo;
                 }
+
+                // 2. Heurística avanzada
                 if (!pkFieldName) {
-                    const tableName = (gridMeta.vquery || '').replace(/^x/, '').replace(/s$/, '');
-                    const candidates = [`id${gridMeta.vquery}`, `id${tableName}`];
-                    pkFieldName = candidates.find(c => record[c] !== undefined);
-                }
-                if (!pkFieldName) {
-                    pkFieldName = Object.keys(record).find(k => k.startsWith('id'));
+                    const physicalTable = (gridMeta.nombre || '').toLowerCase();
+                    const singularTable = physicalTable.replace(/^x/i, '').replace(/s$/i, '');
+                    const allIdFields = Object.keys(record).filter(k => k.toLowerCase().startsWith('id') || k.toLowerCase().endsWith('id'));
+
+                    // Buscar el que coincida con la tabla (ej: XCONTROLS -> idcontrol)
+                    pkFieldName = allIdFields.find(f => f.toLowerCase() === `id${singularTable}` || f.toLowerCase() === `${singularTable}id`);
+
+                    if (!pkFieldName) {
+                        // Si hay varios id*, evitar el que parezca ser el del maestro
+                        if (allIdFields.length > 1 && gridMeta.gparent) {
+                            pkFieldName = allIdFields.find(f => {
+                                const isFormId = f.toLowerCase() === 'idform'; // Caso común en metadatos
+                                return !isFormId;
+                            });
+                        }
+                        if (!pkFieldName) pkFieldName = allIdFields[0];
+                    }
                 }
                 finalRecordId = pkFieldName ? record[pkFieldName] : null;
             }

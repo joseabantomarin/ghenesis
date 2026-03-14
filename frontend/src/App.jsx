@@ -20,6 +20,7 @@ import RoleManager from './components/RoleManager';
 import Login from './components/Login';
 import ResetPassword from './components/ResetPassword';
 import ChangePassword from './components/ChangePassword';
+import AlertDialog from './components/AlertDialog';
 import './theme.css'; // Importando Tema Global
 
 const drawerWidth = 310;
@@ -50,12 +51,13 @@ const getIcon = (iconName, DefaultIcon = ArticleIcon) => {
 
 function App() {
     const { loading: authLoading, token, user, logout } = useAuth();
-    const { loadingMenu } = useMetadata();
+    const { loadingMenu, runFormEvent } = useMetadata();
     const { sistemaConfig, loading: systemLoading } = useSystem();
     const isMobile = useMediaQuery('(max-width:690px)'); // Detectar pantalla móvil
     const location = useLocation(); // Hook para saber en qué URL estamos
     // Por defecto ocultar menú en móviles, mostrar en PC
     const [drawerOpen, setDrawerOpen] = useState(!isMobile);
+    const [alertConfig, setAlertConfig] = useState({ open: false, title: '', message: '', severity: 'info' });
 
     // Sistema de Pestañas
     const [tabs, setTabs] = useState([{ id: 'home', title: 'Home', type: 'home', icon: 'Home' }]);
@@ -84,11 +86,28 @@ function App() {
         setActiveTab(newValue);
     };
 
-    const closeTab = (e, tabId) => {
+    const closeTab = async (e, tabId) => {
         e.stopPropagation(); // Evitar que seleccione la pestaña al cerrarla
+        
+        // Ejecutar script sclose si existe en metadatos para este formulario
+        const tabToClose = tabs.find(t => t.id === tabId);
+        if (tabToClose && tabToClose.idform && !isNaN(Number(tabToClose.idform))) {
+            const result = await runFormEvent(Number(tabToClose.idform), 'sclose', { userId: user?.username || 'admin' });
+            
+            // Si el script sclose devuelve una alerta, la mostramos
+            if (result && result.alert) {
+                setAlertConfig({
+                    open: true,
+                    title: result.alert.title || 'Aviso',
+                    message: result.alert.message || '',
+                    severity: result.alert.severity || 'info'
+                });
+            }
+        }
+
         let newTabs = tabs.filter(t => t.id !== tabId);
         setTabs(newTabs);
-        if (activeTab === tabId) {
+        if (activeTab === tabId && newTabs.length > 0) {
             setActiveTab(newTabs[newTabs.length - 1].id); // Mover a la última pestaña abierta
         }
     };
@@ -399,11 +418,19 @@ function App() {
                             ) : tab.type === 'change-password' ? (
                                 <ChangePassword />
                             ) : (
-                                <DynamicView idform={tab.idform || tab.id} />
+                                <DynamicView idform={tab.idform || tab.id} isActive={activeTab === tab.id} />
                             )}
                         </TabPanel>
                     ))}
                 </Box>
+                
+                <AlertDialog 
+                    open={alertConfig.open}
+                    title={alertConfig.title}
+                    message={alertConfig.message}
+                    severity={alertConfig.severity}
+                    onClose={() => setAlertConfig(prev => ({ ...prev, open: false }))}
+                />
             </Box>
         </Box>
     );
