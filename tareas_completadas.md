@@ -288,3 +288,6 @@
 - **Cierre Perimetral (Filtro por Rol):** La interfaz visual (`DynamicMenu.jsx`) fue acondicionada para identificar si la cuenta activa porta el esquema de permisos del rol "INVITADO". 
 - Si bien las características estándares (`readonly`, `hidden`) se mantienen vigentes para todos los usuarios, los invitados únicamente podrán visualizar y acceder a los _módulos o formularios (idform)_ explícitamente habilitados (con check validado en la base de datos).
 - **Control de Acceso a Configuración:** Se retiró el menú "Configuración" (Usuarios / Roles) que antes estaba empotrado en duro para garantizar consistencia. Ahora solo los mantenedores y administradores logran verlo, gestionándose a través de permisos de BD.
+
+### Infraestructura y Despliegue (DevOps)
+- **Inicialización Automática de BD:** Se creó la carpeta `init_db` y se vinculó en el `docker-compose.yml` al punto de montaje `/docker-entrypoint-initdb.d/`. Esto garantiza que, en cualquier nuevo entorno (como Linux), la base de datos se autoconstruya con toda la metadata y usuarios actuales al ejecutar el primer `docker-compose up`.

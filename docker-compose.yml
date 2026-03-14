@@ -11,6 +11,7 @@ services:
       - "5433:5432" # Puerto 5433 en tu Mac mapea al 5432 dentro del contenedor
     volumes:
       - ./postgres_data:/var/lib/postgresql/data # Persistencia de datos en carpeta local
+      - ./init_db:/docker-entrypoint-initdb.d # Carga automatica de datos en instalaciones nuevas
 
   backend:
     build:
