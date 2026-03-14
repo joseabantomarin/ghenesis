@@ -9,7 +9,7 @@
     --grid-header-bg: #3c7a7d;
     /* Un Verde-Azulado medio, suaviza el paso desde el AppBar */
     --grid-header-color: #ffffff;
-    --grid-selected-row-bg: rgba(60, 122, 125, 0.08);
+    --grid-selected-row-bg: rgba(60, 122, 125, 0.02);
     /* Fondo muy sutil derivado del verde-azulado */
 
     /* Pestañas y Títulos */
@@ -80,4 +80,17 @@
 
 .force-uppercase input {
     text-transform: uppercase;
+}
+
+/* Celda enfocada: fondo ligeramente más oscuro que la fila seleccionada */
+.ag-row-selected .ag-cell-focus {
+    background-color: rgba(60, 122, 125, 0.12) !important;
+}
+
+/* Indicador de celda modificada (triangulito en la esquina) */
+.cell-dirty {
+    background-image: linear-gradient(225deg, transparent 50%, #d32f2f 50%) !important;
+    background-size: 8px 8px !important;
+    background-repeat: no-repeat !important;
+    background-position: top right !important;
 }

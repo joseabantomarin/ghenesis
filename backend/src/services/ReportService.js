@@ -27,52 +27,55 @@ class ReportService {
             if (res.rows.length > 0) {
                 repoMeta = res.rows[0];
             } else {
-                // FALLBACK MOCK para que puedas probarlo sin la BD corriendo
+                // FALLBACK MOCK
                 if (idreport === 'catalog_rep') {
                     repoMeta = {
-                        title: 'Catálogo de Usuarios',
-                        rformato: JSON.stringify({
+                        nombre: 'Catálogo de Usuarios',
+                        formato: JSON.stringify({
                             conEncabezado: true,
                             columnas: ['ID', 'Usuario', 'Correo']
                         }),
-                        consulta: 'SELECT id, username, email FROM fake_table'
+                        ejecuta: 'SELECT id, username, email FROM fake_table'
                     };
                 } else {
-                    throw new Error('Reporte no encontrado');
+                    throw new Error(`Reporte con ID ${idreport} no encontrado`);
                 }
             }
 
-            // 2. Extraer el formato JSON guardado en RFormato
-            // En tu BD, rformato guardará la estructura del diseño
-            const layoutOptions = JSON.parse(repoMeta.rformato || '{}');
+            // 2. Extraer el formato (JSON o XML)
+            let layoutOptions = {};
+            const formatStr = repoMeta.formato || repoMeta.rformato || '{}';
+            if (formatStr.trim().startsWith('{')) {
+                try {
+                    layoutOptions = JSON.parse(formatStr);
+                } catch (e) {
+                    console.warn("No se pudo parsear formato como JSON, usando objeto vacío");
+                }
+            }
 
-            // 3. Ejecutar la 'consulta' para traer los datos (Simulado si falla BD)
+            // 3. Ejecutar la consulta (simulado si es XML por ahora)
             let rawData = [];
+            let queryToRun = repoMeta.consulta || repoMeta.ejecuta;
+            
             try {
-                if (repoMeta.consulta) {
-                    // Cuidado: En producción sanitizar `consulta` y parameters si vienen externos
-                    const dataRes = await db.query(repoMeta.consulta);
+                if (queryToRun && queryToRun.toLowerCase().includes('select')) {
+                    const dataRes = await db.query(queryToRun);
                     rawData = dataRes.rows;
                 }
             } catch (e) {
-                // Mock data para reportes si la BD no responde
+                console.warn("Error ejecutando consulta de reporte, usando mocks:", e.message);
                 rawData = [
                     { "ID": 1, "Usuario": "admin", "Correo": "admin@empresa.com" },
-                    { "ID": 2, "Usuario": "jdoe", "Correo": "jdoe@empresa.com" },
-                    { "ID": 3, "Usuario": "jperez", "Correo": "jperez@empresa.com" }
+                    { "ID": 2, "Usuario": "jdoe", "Correo": "jdoe@empresa.com" }
                 ];
             }
 
-            // 4. Construir el documento en formato PdfMake dinámicamente
-            // Mapeamos los datos SQL a la tabla de PdfMake
+            // 4. Construir documento PdfMake
             let tableBody = [];
-
             if (rawData.length > 0) {
-                // Cabeceras (usando las llaves del primer objeto o las especificadas)
                 const headers = layoutOptions.columnas || Object.keys(rawData[0]);
                 tableBody.push(headers.map(h => ({ text: h, style: 'tableHeader' })));
 
-                // Filas de datos
                 rawData.forEach(row => {
                     tableBody.push(headers.map(h => {
                         const cellVal = row[h] || row[h.toLowerCase()];
@@ -83,10 +86,9 @@ class ReportService {
                 tableBody.push(['Sin resultados']);
             }
 
-            // Document Definition Object de PdfMake
             const docDefinition = {
                 content: [
-                    { text: repoMeta.title || 'Reporte del Sistema', style: 'header' },
+                    { text: repoMeta.descripcion || repoMeta.nombre || 'Reporte del Sistema', style: 'header' },
                     { text: 'Generado desde Ghenesis Framework\n\n', style: 'subheader' },
                     {
                         style: 'tableExample',
@@ -106,7 +108,6 @@ class ReportService {
                 defaultStyle: { font: 'Roboto' }
             };
 
-            // 5. Generar el PDF y devolver un Stream
             return printer.createPdfKitDocument(docDefinition);
 
         } catch (error) {

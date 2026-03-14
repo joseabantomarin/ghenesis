@@ -291,3 +291,77 @@
 
 ### Infraestructura y Despliegue (DevOps)
 - **Inicialización Automática de BD:** Se creó la carpeta `init_db` y se vinculó en el `docker-compose.yml` al punto de montaje `/docker-entrypoint-initdb.d/`. Esto garantiza que, en cualquier nuevo entorno (como Linux), la base de datos se autoconstruya con toda la metadata y usuarios actuales al ejecutar el primer `docker-compose up`.
+
+## [2026-03-13] - Refinamiento de Selección en DynamicGrid y Corrección de Guardado
+
+### Selección Profesional en AG Grid (`DynamicGrid.jsx`)
+- **Click en fila:** Selecciona únicamente esa fila, deseleccionando las demás. Actualiza indicador de registro y tabla hija.
+- **Click en checkbox (columna izquierda):** Toggle individual — prende/apaga la selección de esa fila sin afectar las demás filas seleccionadas. Permite multi-selección manual.
+- **Shift + Click:** Selección por rango desde la fila enfocada hasta la clickeada.
+- **Ctrl/Cmd + Click:** Toggle individual sin limpiar la selección existente.
+- **Flechas ↑ ↓:** Navegan a la fila anterior/siguiente, seleccionándola como si fuera un click (actualiza indicador y detalle hijo).
+- **Shift + Flechas ↑ ↓:** Extienden la selección fila por fila en la dirección indicada.
+- **Mecanismo interno:** Se usa `suppressRowClickSelection={true}` con lógica manual en `onRowClicked` y `onCellFocused`. Refs `focusFromClickRef` (timestamp) y `shiftHeldRef` coordinan el origen del foco y el estado de la tecla Shift para evitar conflictos entre eventos.
+
+### Estilo Visual de Celda Enfocada
+- **CSS `.ag-row-selected .ag-cell-focus`:** La celda con foco recibe un fondo ligeramente más oscuro (`rgba(60, 122, 125, 0.18)`) que la fila seleccionada (`0.08`), dando feedback visual claro de la celda activa dentro de la fila.
+
+### Corrección Crítica de Guardado (`DynamicController.js`)
+- **Bug `values is not defined`:** El bloque INSERT usaba una variable `values` que no existía (debía ser `params`). Se corrigió la referencia y se añadió la detección de PK para el `RETURNING`.
+- **Bug UPDATE sin parámetros completos:** Los placeholders `$N+1` (updtype) y `$N+2` (recordId) del UPDATE no tenían sus valores en el array de params. Se añadieron `params.push(1)` y `params.push(recordId)`.
+
+### Localización de Registro Tras Guardado (Record Locate)
+- **Problema:** Al guardar un registro que cambiaba de posición (por ORDER BY o updtype), se perdía la selección y el registro desaparecía de la vista si se movía a otra página.
+- **Solución Backend (`buildWrappedQuery`):** Se añadieron los query params `locateField` y `locateValue`. Cuando están presentes, el backend ejecuta un `ROW_NUMBER() OVER()` sobre el dataset filtrado/ordenado para encontrar la posición del registro, calcula la página correcta (`Math.ceil(rowNum / limit)`) y devuelve los datos de esa página.
+- **Solución Frontend (`DynamicGrid.jsx`):** Se usan dos refs: `pendingLocate` (envía params al backend para calcular la página) y `pendingSelectPK` (reselecciona el registro una vez cargados los datos). Un `useEffect` sobre `data` busca el nodo por PK, lo selecciona, hace scroll visible y mueve el foco.
+- **Alcance:** Funciona tanto para guardado inline como para guardado desde el formulario de edición.
+## [2026-03-14] - Normalización de Identificadores y Mejora Maestro-Detalle
+
+### Renumeración de Estructura de Metadatos
+- **ID Normalization:** Se implementó una rutina masiva para renumerar de forma secuencial y limpia (desde 1) los identificadores fundamentales del sistema:
+    - **`XFORMS`:** Se remapearon todos los `idform`, actualizando recursivamente sus relaciones de parentesco (`idparent`) y dependencias en `XGRID`, `XCONTROLS` y `XPERMISSIONS`.
+    - **`XGRID`:** Sincronización de `idgrid` y actualización crítica de la columna `gparent` para no romper las relaciones Maestro-Detalle existentes.
+    - **`XFIELD`:** Renumeración de `idfield` manteniendo el orden lógico por `idgrid` y `posicion`.
+- **Integridad Referencial:** Se usaron scripts PL/pgSQL avanzados con IDs temporales negativos para evitar colisiones de llaves primarias y restricciones durante la migración.
+
+### Estabilización de Consultas y Errores 500
+- **Resiliencia Soft-Delete:** Se blindó el `DynamicController` para evitar errores 500 cuando una tabla física no posee la columna `updtype`. El sistema ahora detecta la existencia de la columna antes de aplicar filtros de borrado lógico.
+- **Auto-Aprovisionamiento Inteligente:** La función `ensureUpdtypeColumn` fue refinada para distinguir entre tablas físicas y vistas/queries SQL, evitando intentos fallidos de alteración de base de datos (`ALTER TABLE`) sobre objetos virtuales.
+- **Soporte Sopen:** Se garantizó que la estructura técnica necesaria para el framework se cree incluso en grillas que utilizan scripts personalizados (`sopen`).
+
+### Motor Maestro-Detalle Multicapa (Frontend)
+- **Soporte Multi-Hijo:** Se rediseñó `DynamicView.jsx` para permitir que una grilla maestra tenga **múltiples grillas de detalle** simultáneas.
+- **Interfaz de Navegación:** Implementación de un sistema de pestañas (Tabs) secundarias en la sección inferior que permite al usuario alternar entre diferentes vistas de detalle (ej: en Mantenimiento de Formularios se puede saltar entre Grillas, Campos y Controles del formulario seleccionado).
+- **Sincronización Total:** Los detalles se refrescan y sincronizan automáticamente al cambiar de registro en la maestra o al alternar entre las pestañas de detalle.
+
+## [2026-03-14] - Corrección de Reportes y Detección de PK
+
+### Gestión de Reportes (FastReport)
+- **Navegación de Reportes Estabilizada:** Se corrigió un error 500 al navegar a módulos tipo reporte (ej: Factura Ventas). El sistema ahora prioriza `idreport` sobre `idform` para cargar el diseño correcto desde `XREPORTS`.
+- **Backend Robustecido:** `ReportService.js` ahora maneja con seguridad formatos de diseño XML (FastReport) y falta de consultas SQL, proporcionando fallbacks técnicos en lugar de colapsar la solicitud.
+
+### Restauración de Metadatos
+- **Recuperación de Campos de Controles:** Se restauraron manualmente los registros de `XFIELD` para la grilla de mantenimiento de controles (`idgrid=4`). Esto permite que la pestaña "Controles" en el mantenimiento de formularios vuelva a mostrar datos tras la normalización de IDs.
+
+### Inteligencia en Relaciones Maestro-Detalle
+- **Detección Dinámica de PK:** Se reemplazó la lista fija de prioridades de IDs por un motor de detección inteligente en `DynamicGrid.jsx`. 
+    - El sistema ahora consulta los metadatos del grid padre para identificar su clave primaria real (`pk: true`).
+    - En su defecto, aplica una heurística basada en el nombre de la vista (ej: `xforms` -> `idform`).
+- **Filtrado Multi-Nivel:** Esta mejora garantiza que todos los niveles de detalle (hijos, nietos) filtren sus datos correctamente sin importar qué otros campos de ID existan en el registro padre.
+
+## [2026-03-14] - Edición en Lote (Batch Editing) y Navegación tipo Hoja de Cálculo
+
+### Modo Batch Edit (`recnoedit`)
+- **Guardado Diferido:** Cuando `recnoedit=true` en `XGRID`, las ediciones inline ya no se envían al servidor inmediatamente. Los cambios se almacenan en memoria local hasta que el usuario confirme o cancele.
+- **Indicador Visual de Celda Modificada:** Se añadió la clase CSS `.cell-dirty` en `theme.css` que dibuja un **triángulo rojo** en la esquina superior derecha de cada celda con cambios pendientes, usando `cellClassRules` de AG Grid.
+- **Barra de Acciones Batch:** Al existir cambios pendientes, aparece una barra inferior elegante con botones **Guardar** y **Cancelar**. Los colores se derivan dinámicamente del tema con `rgb(from var(--primary-color) r g b / 30%)`.
+- **Guardado Masivo:** El botón Guardar recorre todas las filas modificadas, ejecuta los scripts de validación (`ssave`/`ssavepost`) y envía los datos al servidor.
+
+### Navegación con Flechas (Estilo Hoja de Cálculo)
+- **Fix crítico de `rowIndex`:** Se corrigió un bug donde `rowIndex` era `undefined` en el handler de teclas de flecha (no estaba desestructurado de `params`), impidiendo que la navegación vertical funcionara correctamente.
+- **Movimiento fluido en modo batch:** Al presionar flecha arriba/abajo mientras se edita, el cambio se guarda en memoria y el cursor se mueve instantáneamente a la siguiente/anterior fila en la misma columna.
+- **Eliminación de condición de carrera (recnoedit=false):** Se trasladó la lógica de `pendingMove` desde `handleCellValueChanged` al `useEffect` de reselección, garantizando que el movimiento se ejecute DESPUÉS de que React renderice los nuevos datos, evitando parpadeos.
+
+### Estabilidad de Posición de Filas
+- **ORDER BY Predeterminado:** Se añadió un ordenamiento automático en `DynamicController.js` cuando no hay `sortField` del usuario. Utiliza la PK definida en metadatos o detecta campos ID comunes, evitando que PostgreSQL reordene filas tras un UPDATE.
+- **Persistencia de Columna Enfocada:** Tras un guardado inline, el cursor vuelve a la **misma columna** donde estaba el usuario (antes saltaba al checkbox de selección). Se implementó mediante un nuevo ref `pendingSelectCol`.

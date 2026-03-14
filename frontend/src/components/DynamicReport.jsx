@@ -12,9 +12,10 @@ const DynamicReport = ({ meta, ui, idreport, onClose }) => {
     const [loading, setLoading] = useState(false);
 
     // El ID del reporte puede venir de la prop 'idreport' (modal via ui.reporte) 
-    // o indirectamente de 'meta.form.idform' (menú del sistema)
-    const currentReportId = idreport || (meta?.form?.idform) || 'default_report';
-    const reportTitle = meta?.form?.nombre || meta?.form?.cform || `Reporte ${currentReportId}`;
+    // o indirectamente de 'meta.form.idreport' (si es un módulo de reporte)
+    // o como fallback el idform.
+    const currentReportId = idreport || (meta?.form?.idreport) || (meta?.form?.idform) || 'default_report';
+    const reportTitle = meta?.form?.descripcion || meta?.form?.nombre || meta?.form?.cform || `Reporte ${currentReportId}`;
 
     const handleGenerate = () => {
         // En un futuro, aquí se llamará a la API de FastReport.

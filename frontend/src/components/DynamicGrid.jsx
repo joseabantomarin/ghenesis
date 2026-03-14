@@ -144,7 +144,7 @@ const myTheme = themeQuartz.withParams({
 
 
 
-const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingStateChange, allGrids, sactivateData, readonlyMode, simplified, autoFocusFirstRow = true }) => {
+const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingStateChange, allGrids, sactivateData, readonlyMode, simplified, autoFocusFirstRow = true, autoHeightContent = false }) => {
     const gridRef = useRef();
     const { user } = useAuth();
     const theme = useTheme();
@@ -179,10 +179,28 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
     const [contextMenu, setContextMenu] = useState(null);
     const [isConfirmingExport, setIsConfirmingExport] = useState(false);
     const [showDeleted, setShowDeleted] = useState(false);
+    const [pendingChanges, setPendingChanges] = useState({}); // { rowId: { colId: newValue } }
 
     // Refs para coordinación de navegación y guardado
     const pendingMove = useRef(null);
     const isSaving = useRef(false);
+    const focusFromClickRef = useRef(0);      // Timestamp del último click (evita conflicto con onCellFocused)
+    const shiftHeldRef = useRef(false);       // Rastrea si Shift está presionado
+    const pendingSelectPK = useRef(null);     // PK del registro a reseleccionar tras fetchData
+    const pendingSelectCol = useRef(null);    // Campo a re-enfocar tras fetchData
+    const pendingLocate = useRef(null);        // {field, value} para localizar registro en otra página
+
+    // Rastrear estado de la tecla Shift globalmente
+    useEffect(() => {
+        const onKeyDown = (e) => { if (e.key === 'Shift') shiftHeldRef.current = true; };
+        const onKeyUp = (e) => { if (e.key === 'Shift') shiftHeldRef.current = false; };
+        window.addEventListener('keydown', onKeyDown);
+        window.addEventListener('keyup', onKeyUp);
+        return () => {
+            window.removeEventListener('keydown', onKeyDown);
+            window.removeEventListener('keyup', onKeyUp);
+        };
+    }, []);
     // --- Helper Memos y Callbacks (Definidos antes de ser usados en effects) ---
     const isDeveloper = useMemo(() => {
         const role = user?.role?.toUpperCase() || '';
@@ -243,11 +261,41 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
             };
 
             if (gridMeta.gparent && masterRecord) {
-                const pkHierarchy = ['idfield', 'idcontrol', 'idgrid', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'iduser', 'idrole', 'idacademia', 'idcurso', 'idform', 'idsistema', 'id'];
-                const masterPkField = pkHierarchy.find(key => masterRecord[key] !== undefined) || Object.keys(masterRecord)[0];
+                let masterPkField = null;
+
+                // 1. Intentar encontrar el Meta del Grid Padre para obtener su PK real configurada
+                if (allGrids) {
+                    const parentGrid = allGrids.find(g => g.idgrid === gridMeta.gparent);
+                    if (parentGrid && parentGrid.fields) {
+                        // Buscar el campo marcado como PK en el padre
+                        masterPkField = parentGrid.fields.find(f => f.pk === true)?.campo;
+
+                        // Si no hay PK marcado, intentar adivinar basado en el nombre del padre (ej: xforms -> idform)
+                        if (!masterPkField && parentGrid.vquery) {
+                            const vquery = parentGrid.vquery.toLowerCase();
+                            const tableName = vquery.replace(/^x/, '').replace(/s$/, '');
+                            const candidate = `id${tableName}`;
+                            if (masterRecord[candidate] !== undefined) masterPkField = candidate;
+                        }
+                    }
+                }
+
+                // 2. Fallback a la jerarquía si no se pudo determinar por metadata del padre
+                if (!masterPkField) {
+                    const pkHierarchy = ['idfield', 'idcontrol', 'idgrid', 'idreport', 'idtable', 'idconsult', 'idfunction', 'idfile', 'iduser', 'idrole', 'idacademia', 'idcurso', 'idform', 'idsistema', 'id'];
+                    masterPkField = pkHierarchy.find(key => masterRecord[key] !== undefined) || Object.keys(masterRecord)[0];
+                }
+
                 params.masterField = masterPkField;
                 params.masterValue = masterRecord[masterPkField];
                 params.masterRecordPayload = JSON.stringify(masterRecord);
+            }
+
+            // Si hay un registro pendiente de localizar, agregar params para que el backend calcule la página
+            if (pendingLocate.current) {
+                params.locateField = pendingLocate.current.field;
+                params.locateValue = pendingLocate.current.value;
+                pendingLocate.current = null;
             }
 
             const res = await axios.get(`/api/dynamic/data/${idform}/${gridMeta.idgrid}`, { params });
@@ -257,6 +305,13 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                 setServerAggregates(res.data.meta.aggregates || {});
                 if (res.data.meta.uiStyles) {
                     setUiStyles(prev => ({ ...prev, ...res.data.meta.uiStyles }));
+                }
+                // Si el backend devolvió una página diferente (porque localizó el registro), sincronizar
+                if (res.data.meta.page !== undefined) {
+                    const serverPage = res.data.meta.page - 1; // Backend es 1-indexed, frontend 0-indexed
+                    if (serverPage !== page) {
+                        setPage(serverPage);
+                    }
                 }
             } else {
                 setError(res.data.error || 'Error fetching grid data');
@@ -268,6 +323,63 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
             isSaving.current = false;
         }
     }, [idform, gridMeta, page, rowsPerPage, sortField, sortOrder, gridFilters, searchText, extraParams, masterRecord, showDeleted]);
+
+    // Re-seleccionar registro tras fetchData (cuando pendingSelectPK está activo)
+    useEffect(() => {
+        if (!pendingSelectPK.current || !gridRef.current?.api || data.length === 0) return;
+        const pkValue = pendingSelectPK.current;
+        pendingSelectPK.current = null;
+
+        // Buscar nodo por PK en la grilla
+        const api = gridRef.current.api;
+        let targetNode = null;
+        let targetIndex = null;
+        api.forEachNodeAfterFilterAndSort((node, index) => {
+            if (targetNode) return;
+            const d = node.data;
+            if (!d) return;
+            const pkField = detectPK(d);
+            if (pkField && String(d[pkField]) === String(pkValue)) {
+                targetNode = node;
+                targetIndex = index;
+            }
+        });
+
+        if (targetNode) {
+            const colToFocus = pendingSelectCol.current || api.getAllDisplayedColumns()[0]?.getColId();
+            pendingSelectCol.current = null;
+
+            // Si hay un movimiento pendiente (flecha arriba/abajo), aplicarlo DESPUÉS de ubicar la fila
+            if (pendingMove.current) {
+                const { direction, colId } = pendingMove.current;
+                const nextIndex = targetIndex + direction;
+                const rowCount = api.getDisplayedRowCount();
+                pendingMove.current = null;
+
+                if (nextIndex >= 0 && nextIndex < rowCount) {
+                    api.deselectAll();
+                    const nextNode = api.getDisplayedRowAtIndex(nextIndex);
+                    if (nextNode) {
+                        nextNode.setSelected(true);
+                        api.ensureIndexVisible(nextIndex, 'middle');
+                        api.setFocusedCell(nextIndex, colId || colToFocus);
+                    }
+                } else {
+                    // Estamos en el borde, quedarnos en la fila actual
+                    api.deselectAll();
+                    targetNode.setSelected(true);
+                    api.ensureIndexVisible(targetIndex, 'middle');
+                    if (colToFocus) api.setFocusedCell(targetIndex, colToFocus);
+                }
+            } else {
+                // Sin movimiento pendiente: re-enfocar la misma celda
+                api.deselectAll();
+                targetNode.setSelected(true);
+                api.ensureIndexVisible(targetIndex, 'middle');
+                if (colToFocus) api.setFocusedCell(targetIndex, colToFocus);
+            }
+        }
+    }, [data, detectPK]);
 
     // Cargar datos al montar y cuando cambien sus dependencias estables
     useEffect(() => {
@@ -906,25 +1018,40 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
     };
 
     const handleSelectionChanged = async () => {
-        const selectedRows = gridRef.current.api.getSelectedRows();
-        const rec = selectedRows.length > 0 ? selectedRows[0] : null;
-        setSelectedRecord(rec);
+        const api = gridRef.current?.api;
+        if (!api) return;
+        const selectedRows = api.getSelectedRows();
 
-        if (rec) {
-            let rowIdx = null;
-            gridRef.current.api.forEachNodeAfterFilterAndSort((node, index) => {
-                if (node.isSelected()) rowIdx = index;
+        // Para el indicador y el detalle, usamos la fila enfocada si hay selección
+        const focusedCell = api.getFocusedCell();
+        let primaryRecord = null;
+        let primaryIndex = null;
+
+        if (focusedCell) {
+            const focusedNode = api.getDisplayedRowAtIndex(focusedCell.rowIndex);
+            if (focusedNode && focusedNode.isSelected()) {
+                primaryRecord = focusedNode.data;
+                primaryIndex = focusedCell.rowIndex;
+            }
+        }
+
+        // Fallback: si no hay foco o el foco no está seleccionado, usar primera seleccionada
+        if (!primaryRecord && selectedRows.length > 0) {
+            primaryRecord = selectedRows[0];
+            api.forEachNodeAfterFilterAndSort((node, index) => {
+                if (primaryIndex === null && node.data === primaryRecord) primaryIndex = index;
             });
-            setSelectedRowIndex(rowIdx !== null ? page * rowsPerPage + rowIdx + 1 : null);
+        }
 
-            // Disparar sscroll al seleccionar una nueva fila
-            await dispatchGridEvent('sscroll', { selected: rec });
-        } else {
-            setSelectedRowIndex(null);
+        setSelectedRecord(primaryRecord);
+        setSelectedRowIndex(primaryIndex !== null ? page * rowsPerPage + primaryIndex + 1 : null);
+
+        if (primaryRecord) {
+            await dispatchGridEvent('sscroll', { selected: primaryRecord });
         }
 
         if (onRowSelect) {
-            onRowSelect(gridMeta.idgrid, rec);
+            onRowSelect(gridMeta.idgrid, primaryRecord);
         }
     };
 
@@ -1104,6 +1231,14 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
     };
 
     const closeEdit = () => {
+        // Guardar PK del registro editado para reseleccionarlo tras refrescar
+        if (editingRecord) {
+            const pkField = detectPK(editingRecord);
+            if (pkField && editingRecord[pkField] !== undefined) {
+                pendingSelectPK.current = editingRecord[pkField];
+                pendingLocate.current = { field: pkField, value: editingRecord[pkField] };
+            }
+        }
         setEditingRecord(null);
         fetchData();
     };
@@ -1250,11 +1385,42 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
     const handleCellValueChanged = async (event) => {
         const { colDef, newValue } = event;
         const recordData = { ...event.data };
+        const rowId = getRowId(event);
 
         // Propagar datafield si existe (Mapping virtual -> físico)
         const fieldMeta = gridMeta.fields?.find(f => f.campo === colDef.field);
         if (fieldMeta && fieldMeta.datafield && fieldMeta.datafield.trim() !== '') {
             recordData[fieldMeta.datafield.trim()] = newValue;
+        }
+
+        // --- COMPORTAMIENTO BATCH EDIT (recnoedit) ---
+        if (gridMeta.recnoedit) {
+            setPendingChanges(prev => ({
+                ...prev,
+                [rowId]: {
+                    ...(prev[rowId] || {}),
+                    [colDef.field]: newValue
+                }
+            }));
+            if (onEditingStateChange) onEditingStateChange(true);
+
+            // Ejecutar movimiento pendiente (flechas arriba/abajo) inmediatamente
+            if (pendingMove.current && gridRef.current?.api) {
+                const { direction, rowIndex, colId } = pendingMove.current;
+                const nextIndex = rowIndex + direction;
+                const api = gridRef.current.api;
+                const rowCount = api.getDisplayedRowCount();
+                if (nextIndex >= 0 && nextIndex < rowCount) {
+                    api.setFocusedCell(nextIndex, colId);
+                    const node = api.getDisplayedRowAtIndex(nextIndex);
+                    if (node) {
+                        api.deselectAll();
+                        node.setSelected(true);
+                    }
+                }
+                pendingMove.current = null;
+            }
+            return;
         }
 
         // Fase 1: BEFORE SAVE INLINE
@@ -1292,28 +1458,80 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                 }
             }
 
+            // Guardar PK y Columna para reseleccionar tras refrescar
+            const pkVal = recordData[pkField];
+            if (pkVal !== undefined && pkVal !== null) {
+                pendingSelectPK.current = pkVal;
+                pendingSelectCol.current = colDef.field;
+                pendingLocate.current = { field: pkField, value: pkVal };
+            }
+
             // Refrescar totales y datos de forma silenciosa
             await fetchData(true);
 
-            // Si hay un movimiento pendiente (flechas), ejecutarlo ahora
-            if (pendingMove.current && gridRef.current?.api) {
-                const { direction, rowIndex, colId } = pendingMove.current;
-                const nextIndex = rowIndex + direction;
-                const api = gridRef.current.api;
-                const rowCount = api.getDisplayedRowCount();
-
-                if (nextIndex >= 0 && nextIndex < rowCount) {
-                    api.setFocusedCell(nextIndex, colId);
-                    const node = api.getDisplayedRowAtIndex(nextIndex);
-                    if (node) node.setSelected(true);
-                }
-                pendingMove.current = null;
-            }
+            // El pendingMove se ejecutará en el useEffect de reselección,
+            // cuando los datos ya estén renderizados en la grilla.
         } catch (error) {
             console.error('Error en auto-guardado inline:', error);
             alert("Excepción crítica al guardar cambios: " + (error.response?.data?.error || error.message));
             fetchData(true);
         }
+    };
+
+    const handleBatchCancel = () => {
+        setPendingChanges({});
+        if (onEditingStateChange) onEditingStateChange(false);
+        fetchData(true);
+    };
+
+    const handleBatchSave = async () => {
+        const rowIds = Object.keys(pendingChanges);
+        if (rowIds.length === 0) return;
+
+        setLoading(true);
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const rowId of rowIds) {
+            const changes = pendingChanges[rowId];
+            const node = gridRef.current?.api?.getRowNode(rowId);
+            if (!node) continue;
+
+            const recordData = { ...node.data, ...changes };
+            const pkField = detectPK(recordData);
+
+            try {
+                // BEFORE SAVE
+                const continuable = await dispatchGridEvent('ssave', { record: recordData });
+                if (!continuable) {
+                    errorCount++;
+                    continue;
+                }
+
+                const res = await axios.post(`/api/dynamic/data/${idform}/${gridMeta.idgrid}`, {
+                    data: recordData,
+                    isUpdate: true,
+                    recordId: recordData[pkField],
+                    pkField: pkField
+                });
+
+                if (res.data.success) {
+                    successCount++;
+                    // AFTER SAVE
+                    await dispatchGridEvent('ssavepost', { record: recordData });
+                } else {
+                    errorCount++;
+                }
+            } catch (err) {
+                console.error(`Error saving row ${rowId}:`, err);
+                errorCount++;
+            }
+        }
+
+        setLoading(false);
+        setPendingChanges({});
+        if (onEditingStateChange) onEditingStateChange(false);
+        fetchData(true);
     };
 
     const applyColumnStates = (states) => {
@@ -1360,7 +1578,7 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
             className={gridMeta.mayusculas ? 'force-uppercase' : ''}
             sx={{
                 width: '100%',
-                height: gridMeta.gparent ? '500px' : '100%',
+                height: autoHeightContent ? 'auto' : '100%',
                 display: 'flex',
                 flexDirection: 'column',
                 overflow: gridMeta.pie ? 'auto' : 'hidden',
@@ -1376,8 +1594,8 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                 />
             )}
 
-            {/* Header: Titulo y Botones (Oculto en simplified) */}
-            {!simplified && (
+            {/* Header: Titulo y Botones (Oculto en simplified de consulta, visible en autoHeightContent de formulario) */}
+            {(!simplified || autoHeightContent) && (
                 <Box sx={{
                     pl: { xs: 1.5, sm: 1 },
                     pr: { xs: 0, sm: 1 },
@@ -1609,8 +1827,25 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                         <CircularProgress />
                     </Box>
                 )}
-                <Box sx={{ flexGrow: 1, width: '100%' }}>
+                <Box sx={{
+                    flexGrow: 1,
+                    width: '100%',
+                    // Solo activar altura dinámica si se pide explícitamente (ej: en el formulario)
+                    ...(autoHeightContent && {
+                        height: 'auto',
+                        minHeight: 50,
+                        '& .ag-root-wrapper': {
+                            border: 'none'
+                        }
+                    }),
+                    // Si no es auto-height, forzamos 100% para ocupar el espacio del Splitter o Tab
+                    ...(!autoHeightContent && {
+                        height: '100%',
+                        minHeight: 0
+                    })
+                }}>
                     <AgGridReact
+                        domLayout={autoHeightContent ? 'autoHeight' : 'normal'}
                         ref={gridRef}
                         theme={myTheme}
                         rowData={data}
@@ -1619,13 +1854,46 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                         getRowId={getRowId}
                         getRowStyle={getRowStyle}
                         rowSelection="multiple"
-                        suppressRowClickSelection={false}
+                        suppressRowClickSelection={true}
                         rowMultiSelectWithClick={false}
                         onSelectionChanged={handleSelectionChanged}
                         onCellDoubleClicked={handleCellDoubleClicked}
+                        onCellMouseDown={() => { focusFromClickRef.current = Date.now(); }}
                         onRowClicked={(params) => {
-                            // Al hacer clic en la fila, AG Grid por defecto deseleccionará 
-                            // las demás y marcará solo esta (comportamiento estándar).
+                            const event = params.event;
+                            const api = params.api;
+                            const node = params.node;
+                            if (!node || node.isRowPinned()) return;
+
+                            // Detectar si el click fue en la columna del checkbox
+                            const colId = params.column?.getColId?.() || '';
+                            const colDef = params.column?.getColDef?.() || {};
+                            const isCheckboxCol = colDef.checkboxSelection === true;
+
+                            if (isCheckboxCol) {
+                                // Click en checkbox: toggle individual sin limpiar las demás
+                                node.setSelected(!node.isSelected());
+                            } else if (event.shiftKey) {
+                                // Shift+Click: selección por rango
+                                const focusedCell = api.getFocusedCell();
+                                const startIdx = focusedCell ? focusedCell.rowIndex : 0;
+                                const endIdx = params.rowIndex;
+                                const [lo, hi] = startIdx <= endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+                                if (!event.ctrlKey && !event.metaKey) {
+                                    api.deselectAll();
+                                }
+                                for (let i = lo; i <= hi; i++) {
+                                    const n = api.getDisplayedRowAtIndex(i);
+                                    if (n) n.setSelected(true);
+                                }
+                            } else if (event.ctrlKey || event.metaKey) {
+                                // Ctrl/Cmd+Click: toggle individual sin limpiar
+                                node.setSelected(!node.isSelected());
+                            } else {
+                                // Click normal: seleccionar solo esta fila
+                                api.deselectAll();
+                                node.setSelected(true);
+                            }
                         }}
                         onSortChanged={handleSortChanged}
                         onFilterChanged={handleFilterChanged}
@@ -1702,11 +1970,12 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
 
                             if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
                                 if (api.getEditingCells().length > 0) {
+                                    const currentRowIndex = node?.rowIndex ?? params.rowIndex ?? 0;
                                     // Registrar movimiento pendiente y detener edición
                                     // El guardado se dispara en onCellValueChanged -> handleCellValueChanged
                                     pendingMove.current = {
                                         direction: event.key === 'ArrowDown' ? 1 : -1,
-                                        rowIndex: rowIndex,
+                                        rowIndex: currentRowIndex,
                                         colId: column.getColId()
                                     };
                                     api.stopEditing();
@@ -1747,11 +2016,23 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                                 const fieldMeta = (gridMeta.fields || []).find(f => f.campo === colId);
                                 if (fieldMeta) setFocusedHelpText(fieldMeta.ayuda || fieldMeta.titlefield || colId);
 
-                                // Seleccionar la fila al navegar con flechas del teclado
-                                if (e.rowIndex !== null) {
+                                // Si el foco vino de un click reciente (<100ms), onRowClicked ya manejó la selección
+                                if (Date.now() - focusFromClickRef.current < 100) {
+                                    return;
+                                }
+
+                                // Navegación por teclado: sincronizar selección
+                                if (e.rowIndex !== null && e.rowIndex !== undefined && !e.rowPinned) {
                                     const rowNode = e.api.getDisplayedRowAtIndex(e.rowIndex);
-                                    if (rowNode && !rowNode.isSelected()) {
-                                        rowNode.setSelected(true);
+                                    if (rowNode) {
+                                        if (shiftHeldRef.current) {
+                                            // Shift+Flecha: agregar a la selección
+                                            rowNode.setSelected(true);
+                                        } else if (!rowNode.isSelected()) {
+                                            // Flecha simple: seleccionar solo esta fila
+                                            e.api.deselectAll();
+                                            rowNode.setSelected(true);
+                                        }
                                     }
                                 }
                             }
@@ -1770,6 +2051,14 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                             floatingFilter: !simplified,
                             resizable: !simplified,
                             unSortIcon: false,
+                            cellClassRules: {
+                                'cell-dirty': (params) => {
+                                    if (!gridMeta.recnoedit || !params.data || !params.column) return false;
+                                    const rowId = getRowId(params);
+                                    const colId = params.column.getColId();
+                                    return !!pendingChanges[rowId]?.[colId];
+                                }
+                            },
                             suppressKeyboardEvent: (params) => {
                                 // Evitar que el editor numérico de AG Grid incremente/decremente el valor con las flechas
                                 // antes de que nuestra lógica de navegación y guardado tome el control.
@@ -1797,6 +2086,45 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                 </Box>
             </Box>
 
+            {/* Barra de Acciones Batch (Guardar/Cancelar) */}
+            {gridMeta.recnoedit && Object.keys(pendingChanges).length > 0 && (
+                <Box sx={{
+                    px: 2,
+                    py: 0.8,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'flex-start',
+                    // bgcolor: 'rgba(60, 122, 125, 0.85)',
+                    bgcolor: 'rgb(from var(--primary-color) r g b / 10%)',
+                    color: 'white',
+                    borderTop: '2px solid',
+                    borderColor: 'var(--primary-color)',
+                    boxShadow: '0 -2px 10px rgba(0,0,0,0.1)',
+                    zIndex: 10
+                }}>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                        <Button
+                            variant="contained"
+                            size="small"
+                            startIcon={<Icons.Check />}
+                            onClick={handleBatchSave}
+                            sx={{ fontWeight: 'bold', textTransform: 'none', borderRadius: 2, bgcolor: 'var(--primary-color)', '&:hover': { bgcolor: '#1a3a4d' } }}
+                        >
+                            Guardar
+                        </Button>
+                        <Button
+                            variant="outlined"
+                            size="small"
+                            startIcon={<Icons.Close />}
+                            onClick={handleBatchCancel}
+                            sx={{ fontWeight: 'bold', textTransform: 'none', borderRadius: 2, color: 'white', borderColor: 'white', bgcolor: 'var(--grid-header-bg)', '&:hover': { bgcolor: 'rgba(60,122,125,0.9)' } }}
+                        >
+                            Cancelar
+                        </Button>
+                    </Box>
+                </Box>
+            )}
+
             {/* Barra de Ayuda del Campo Enfocado (Sigue activa para feedback) */}
             {focusedHelpText && (
                 <Box sx={{
@@ -1816,8 +2144,8 @@ const DynamicGrid = ({ gridMeta, idform, masterRecord, onRowSelect, onEditingSta
                 </Box>
             )}
 
-            {/* Paginador personalizado */}
-            {!simplified && (
+            {/* Paginador personalizado - Se muestra si NO es simplificado O si supera el rxpage */}
+            {(!simplified || totalRecords > (gridMeta.rxpage || 10)) && (
                 <Box sx={{
                     display: 'flex',
                     alignItems: 'center',

@@ -16,6 +16,7 @@ const DynamicView = ({ idform }) => {
     const [loading, setLoading] = useState(true);
     const [sactivateData, setSactivateData] = useState(null);
     const [activeTab, setActiveTab] = useState(0);
+    const [activeChildTab, setActiveChildTab] = useState(0);
 
     // Master-Detail States
     const [selectedMasterRecord, setSelectedMasterRecord] = useState(null);
@@ -94,11 +95,13 @@ const DynamicView = ({ idform }) => {
             .sort((a, b) => (a.nroframe || 0) - (b.nroframe || 0));
     }, [meta]);
 
-    // 2. Obtener el primer hijo de la grilla maestra activa
+    // 2. Obtener las grillas hijas de la grilla maestra activa
     const activeMasterGrid = masterGrids[activeTab];
-    const childGrid = useMemo(() => {
-        if (!meta || !meta.grids || !activeMasterGrid) return null;
-        return meta.grids.find(g => g.gparent === activeMasterGrid.idgrid);
+    const childGrids = useMemo(() => {
+        if (!meta || !meta.grids || !activeMasterGrid) return [];
+        return meta.grids
+            .filter(g => g.gparent === activeMasterGrid.idgrid)
+            .sort((a, b) => (a.nroframe || 0) - (b.nroframe || 0));
     }, [meta, activeMasterGrid]);
 
     if (loading) return <Box sx={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center' }}><CircularProgress /></Box>;
@@ -107,6 +110,7 @@ const DynamicView = ({ idform }) => {
 
     const handleTabChange = (event, newValue) => {
         setActiveTab(newValue);
+        setActiveChildTab(0);
         setSelectedMasterRecord(null);
     };
 
@@ -180,15 +184,42 @@ const DynamicView = ({ idform }) => {
                             </Box>
                         )}
                         <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', overflow: isMobile ? 'auto' : 'hidden', height: '100%' }}>
-                            <Box sx={{ height: (childGrid && !isMasterEditing) ? (isMobile ? '90%' : `${splitHeight}%`) : '100%', width: '100%', flexShrink: 0, minHeight: isMobile ? '400px' : '200px' }}>
+                            <Box sx={{ height: (childGrids.length > 0 && !isMasterEditing) ? (isMobile ? '90%' : `${splitHeight}%`) : '100%', width: '100%', flexShrink: 0, minHeight: isMobile ? '400px' : '200px' }}>
                                 <DynamicGrid gridMeta={activeMasterGrid} idform={idform} allGrids={meta.grids} sactivateData={sactivateData} readonlyMode={isReadonly} onRowSelect={handleRowSelect} onEditingStateChange={(editing) => setIsMasterEditing(editing)} />
                             </Box>
-                            {!isMobile && childGrid && !isMasterEditing && (
+                            {!isMobile && childGrids.length > 0 && !isMasterEditing && (
                                 <Box onMouseDown={handleMouseDown} sx={{ height: '6px', bgcolor: '#e0e0e0', cursor: 'ns-resize', '&:hover': { bgcolor: 'var(--primary-color)' }, transition: 'background-color 0.2s', flexShrink: 0, zIndex: 10 }} />
                             )}
-                            {childGrid && !isMasterEditing && (
-                                <Box sx={{ height: isMobile ? 'auto' : `${100 - splitHeight}%`, width: '100%', flexGrow: isMobile ? 0 : 1, minHeight: '150px' }}>
-                                    <DynamicGrid gridMeta={childGrid} idform={idform} masterRecord={selectedMasterRecord} allGrids={meta.grids} readonlyMode={true} simplified={true} />
+                            {childGrids.length > 0 && !isMasterEditing && (
+                                <Box sx={{ height: isMobile ? 'auto' : `${100 - splitHeight}%`, width: '100%', flexGrow: isMobile ? 0 : 1, minHeight: '150px', display: 'flex', flexDirection: 'column' }}>
+                                    {childGrids.length > 1 && (
+                                        <Box sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: '#f1f5f9' }}>
+                                            <Tabs 
+                                                value={activeChildTab} 
+                                                onChange={(e, v) => setActiveChildTab(v)} 
+                                                size="small" 
+                                                sx={{ minHeight: 36 }}
+                                            >
+                                                {childGrids.map((g, i) => (
+                                                    <Tab 
+                                                        key={g.idgrid} 
+                                                        label={g.titulo || g.nombre} 
+                                                        sx={{ textTransform: 'none', minHeight: 36, fontSize: '0.8rem', fontWeight: 600 }} 
+                                                    />
+                                                ))}
+                                            </Tabs>
+                                        </Box>
+                                    )}
+                                    <Box sx={{ flexGrow: 1, height: '100%', overflow: 'hidden' }}>
+                                        <DynamicGrid 
+                                            gridMeta={childGrids[activeChildTab] || childGrids[0]} 
+                                            idform={idform} 
+                                            masterRecord={selectedMasterRecord} 
+                                            allGrids={meta.grids} 
+                                            readonlyMode={true} 
+                                            simplified={true} 
+                                        />
+                                    </Box>
                                 </Box>
                             )}
                         </Box>

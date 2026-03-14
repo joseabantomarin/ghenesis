@@ -593,6 +593,8 @@ const DynamicForm = ({ gridMeta, idform, record, onClose, allGrids, readonlyMode
                                     allGrids={allGrids}
                                     readonlyMode={readonlyMode}
                                     autoFocusFirstRow={false}
+                                    simplified={true}
+                                    autoHeightContent={true}
                                 />
                             </Box>
                         ))}

@@ -34,6 +34,7 @@ exports.getFormDefinition = async (req, res) => {
 };
 
 const ensureUpdtypeColumn = async (physicalTable) => {
+    if (!physicalTable) return;
     try {
         // Verificar si la columna updtype existe
         const checkSql = `
@@ -44,19 +45,15 @@ const ensureUpdtypeColumn = async (physicalTable) => {
         const res = await db.query(checkSql, [physicalTable.toLowerCase()]);
 
         if (res.rows.length === 0) {
-            console.log(`🔨 Añadiendo columna 'updtype' a la tabla ${physicalTable}...`);
-            await db.query(`ALTER TABLE ${physicalTable} ADD COLUMN updtype SMALLINT DEFAULT 0`);
-
-            // Consulta técnica de comprobación síncrona según regla del usuario
-            const verifyRes = await db.query(checkSql, [physicalTable.toLowerCase()]);
-            if (verifyRes.rows.length === 0) {
-                throw new Error(`Fallo crítico: No se pudo verificar la creación de 'updtype' en ${physicalTable}`);
+            // Verificar si es una tabla para evitar errores en vistas
+            const tableCheck = await db.query(`SELECT table_type FROM information_schema.tables WHERE table_name = $1`, [physicalTable.toLowerCase()]);
+            if (tableCheck.rows.length > 0 && tableCheck.rows[0].table_type === 'BASE TABLE') {
+                console.log(`🔨 Añadiendo columna 'updtype' a la tabla ${physicalTable}...`);
+                await db.query(`ALTER TABLE ${physicalTable} ADD COLUMN updtype SMALLINT DEFAULT 0`);
             }
         }
     } catch (error) {
         console.error(`❌ Error asegurando columna updtype en ${physicalTable}:`, error.message);
-        // No bloqueamos el flujo si falla (ej: tabla no existe o es una vista), 
-        // pero lo dejamos logueado para depuración.
     }
 };
 
@@ -265,11 +262,17 @@ const buildWrappedQuery = async (baseSql, baseParams, reqQuery, gridMeta) => {
     });
 
     // --- SISTEMA DE BORRADO LÓGICO (Soft Delete) ---
-    const showDeleted = reqQuery.showDeleted === 'true';
-    if (showDeleted) {
-        whereClauses.push(`updtype = 2`);
-    } else {
-        whereClauses.push(`(updtype IS NULL OR updtype <> 2)`);
+    // Solo aplicamos el filtro si la tabla es física y presumiblemente tiene updtype
+    // o si el campo está explícitamente en la definición de la grilla.
+    const hasUpdtype = (gridMeta.fields || []).some(f => f.campo.toLowerCase() === 'updtype') || gridMeta.nombre;
+    
+    if (hasUpdtype) {
+        const showDeleted = reqQuery.showDeleted === 'true';
+        if (showDeleted) {
+            whereClauses.push(`updtype = 2`);
+        } else {
+            whereClauses.push(`(updtype IS NULL OR updtype <> 2)`);
+        }
     }
 
     if (whereClauses.length > 0) {
@@ -313,12 +316,49 @@ const buildWrappedQuery = async (baseSql, baseParams, reqQuery, gridMeta) => {
                 sql += ` ORDER BY ${dbSortField} ${order}`;
             }
         }
+    } else {
+        // ORDEN PREDETERMINADO: Para evitar que las filas "salten" al final tras un update (común en Postgres)
+        // Buscamos la PK definida en metadatos o el primer ID de la tabla.
+        const pkField = (gridMeta.fields || []).find(f => f.pk === true)?.campo;
+        if (pkField) {
+            sql += ` ORDER BY ${pkField} ASC`;
+        } else {
+            // Intentar detectar un campo ID por nombre común (idform, idgrid, etc.)
+            const pkHierarchy = ['idacademia', 'idcurso', 'idform', 'idgrid', 'idfield', 'idcontrol', 'idreport', 'idtable', 'iduser', 'idrole', 'idsistema', 'id'];
+            const fallbackId = pkHierarchy.find(key => (gridMeta.fields || []).some(f => f.campo.toLowerCase() === key));
+            
+            if (fallbackId) {
+                sql += ` ORDER BY ${fallbackId} ASC`;
+            } else if ((gridMeta.fields || []).length > 0) {
+                // Último recurso: ordenar por el primer campo de la grilla
+                sql += ` ORDER BY ${(gridMeta.fields || [])[0].campo} ASC`;
+            }
+        }
     }
 
     // Agregar paginación al SQL original
-    const page = parseInt(reqQuery.page) || 1;
+    let page = parseInt(reqQuery.page) || 1;
     const parsedLimit = parseInt(reqQuery.limit);
     let limit = (!isNaN(parsedLimit) && parsedLimit >= 0) ? parsedLimit : (gridMeta.rxpage || 50);
+
+    // --- LOCALIZAR REGISTRO: Calcular en qué página está un registro específico ---
+    const locateField = reqQuery.locateField;
+    const locateValue = reqQuery.locateValue;
+    if (locateField && locateValue && limit > 0) {
+        try {
+            const locateSql = `SELECT rn FROM (SELECT ROW_NUMBER() OVER() as rn, * FROM (${sql}) AS locate_inner) AS locate_outer WHERE "${locateField}"::text = $${paramIndex}`;
+            const locateParams = [...queryParams, String(locateValue)];
+            const locateRes = await db.query(locateSql, locateParams);
+            if (locateRes.rows.length > 0) {
+                const rowNum = parseInt(locateRes.rows[0].rn);
+                page = Math.ceil(rowNum / limit);
+            }
+        } catch (e) {
+            console.error('Error localizando registro:', e.message);
+            // Si falla, usamos la página original
+        }
+    }
+
     const offset = (page - 1) * limit;
 
     if (limit > 0) {
@@ -358,6 +398,11 @@ exports.getGridData = async (req, res) => {
 
         const gridMeta = metadata.grids.find(g => g.idgrid === idgrid);
         if (!gridMeta) return res.status(404).json({ error: 'Grilla no configurada' });
+
+        // Intentar asegurar columna updtype
+        if (gridMeta.nombre) {
+            await ensureUpdtypeColumn(gridMeta.nombre);
+        }
 
         // Parámetros por si el sopen los necesita puros
         const page = parseInt(req.query.page) || 1;
@@ -424,6 +469,7 @@ exports.getGridData = async (req, res) => {
         // FLUJO ESTANDAR (sin sopen): Usar la tabla o vista configurada en VQUERY
         const physicalTableOrView = gridMeta.vquery;
         if (!physicalTableOrView) return res.status(500).json({ error: 'No se definió VQUERY ni sopen' });
+
 
         try {
             const wrappedResult = await buildWrappedQuery(`SELECT * FROM ${physicalTableOrView}`, [], req.query, gridMeta);
@@ -564,17 +610,29 @@ exports.saveGridData = async (req, res) => {
 
             const setStatements = updateCols.map((col, idx) => `${col} = $${idx + 1}`);
             updateCols.forEach(col => params.push(dataToSave[col]));
+            params.push(1); // updtype = 1: Modificado
+            params.push(recordId);
             sql = `UPDATE ${physicalTable} SET ${setStatements.join(', ')}, updtype = $${updateCols.length + 1} WHERE ${pkField} = $${updateCols.length + 2}`;
 
         } else {
-            columns.forEach(col => values.push(dataToSave[col]));
-            values.push(0); // 0: Recién ingresado (updtype)
+            // INSERT: Detectar PK para el RETURNING
+            let pkField = clientPkField || null;
+            if (!pkField) {
+                const metaPkField = gridMeta.fields.find(f => f.pk === true);
+                pkField = metaPkField ? metaPkField.campo : null;
+            }
+            if (!pkField) {
+                pkField = columns.find(c => c.toLowerCase().startsWith('id') || c.toLowerCase().endsWith('id')) || columns[0];
+            }
+
+            columns.forEach(col => params.push(dataToSave[col]));
+            params.push(0); // 0: Recién ingresado (updtype)
 
             const placeholders = columns.map((_, idx) => `$${idx + 1}`);
             sql = `INSERT INTO ${physicalTable} (${columns.join(', ')}, updtype) VALUES (${placeholders.join(', ')}, $${columns.length + 1}) RETURNING ${pkField}`;
         }
 
-        const result = await db.query(sql, values);
+        const result = await db.query(sql, params);
 
         res.json({
             success: true,
