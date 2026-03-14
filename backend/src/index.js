@@ -14,13 +14,16 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Importar MetadataService
+// Importar Servicios
 const MetadataService = require('./services/MetadataService');
+const SequenceService = require('./services/SequenceService');
 
 // Verificar conexión a DB y cargar caché si es necesario
 db.query('SELECT NOW()')
-    .then(() => {
+    .then(async () => {
         console.log('✅ Base de datos conectada correctamente (PostgreSQL)');
+        // Sincronizar secuencias para que funcionen como AUTO_INCREMENT
+        await SequenceService.syncAllSequences();
     })
     .catch(err => {
         console.error('❌ Base de datos no conectada. Se usarán Mocks...');
